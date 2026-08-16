@@ -15,6 +15,7 @@
         document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
         btn.classList.add("active");
         $(`#tab-${btn.dataset.tab}`).classList.add("active");
+        $("#page-title").textContent = btn.querySelector(".nav-label").textContent;
       });
     });
   }
@@ -28,10 +29,30 @@
   // --- Model tab --------------------------------------------------------
   let modelChart = null;
 
+  function renderModelStats(models, whole) {
+    const stats = $("#model-stats");
+    const sessions = models.reduce((a, m) => a + (m.sessions || 0), 0);
+    const messages = models.reduce((a, m) => a + (m.messages || 0), 0);
+    const hot = models.filter((m) => whole && m.total_tokens / whole >= HIGH_SHARE).length;
+    const tiles = [
+      { label: "总 token", value: fmt(whole) },
+      { label: "模型数", value: fmt(models.length) },
+      { label: "会话数", value: fmt(sessions) },
+      { label: "消息数", value: fmt(messages) },
+      { label: "高消耗模型", value: fmt(hot), hot: hot > 0 },
+    ];
+    stats.innerHTML = tiles.map((t) => `
+      <div class="stat-tile">
+        <div class="label">${t.label}</div>
+        <div class="value${t.hot ? " hot" : ""}">${t.value}</div>
+      </div>`).join("");
+  }
+
   function renderModelTab(data) {
     $("#cx-version").textContent = data.cx_version ? `v${data.cx_version}` : "";
     const models = data.models || [];
     const whole = data.total ? data.total.total_tokens : 0;
+    renderModelStats(models, whole);
 
     const tbody = $("#model-table tbody");
     tbody.innerHTML = "";
@@ -135,12 +156,14 @@
     }
   }
 
-  // --- Debug tab --------------------------------------------------------
-  // 新记录持续从 /api/debug?after=<lastTs> 轮询进来，只插入没见过的，不整表重绘。
+  // --- Debug tab: web-terminal ------------------------------------------
+  // 新记录持续从 /api/debug?after=<lastTs> 轮询进来，像终端一样追加到底部；
+  // 只有用户本来就贴在底部时才自动滚动（"跟随最新"），避免打断向上翻看。
   const DEBUG_POLL_MS = 3000;
-  const DEBUG_MAX_ROWS = 500;
+  const DEBUG_MAX_LINES = 1000;
   let debugLastTs = "";
   let debugPollTimer = null;
+  let debugFollow = true;
 
   function esc(s) {
     const div = document.createElement("div");
@@ -148,39 +171,48 @@
     return div.innerHTML;
   }
 
-  function buildDebugRow(e) {
-    const row = document.createElement("div");
-    row.className = "log-row" + (e.is_error ? " error" : "");
-    const agent = e.agent ? `<span class="agent">[${esc(e.agent)}]</span>` : "";
-    const stop = e.stop_reason ? `<span class="stop">stop=${esc(e.stop_reason)}</span>` : "";
-    const tools = (e.tool_uses || []).length
-      ? `<span class="tools">tools=${esc(e.tool_uses.join(","))}</span>` : "";
-    row.innerHTML = `
-      <span class="ts">${esc(e.timestamp)}</span>
-      <span class="model">${esc(e.model)}</span>
-      ${agent}${stop}${tools}
-      <span class="req-id">${esc(e.request_id)}</span>
-      ${e.is_error && e.error_text ? `<div class="err-text">${esc(e.error_text)}</div>` : ""}`;
-    return row;
+  function isNearBottom(box) {
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   }
 
-  function prependDebugRow(e) {
+  function buildDebugLine(e) {
+    const line = document.createElement("div");
+    line.className = "term-line" + (e.is_error ? " error" : "");
+    const agent = e.agent ? `<span class="agent">[${esc(e.agent)}]</span> ` : "";
+    const stop = e.stop_reason ? ` <span class="stop">stop=${esc(e.stop_reason)}</span>` : "";
+    const tools = (e.tool_uses || []).length
+      ? ` <span class="tools">tools=${esc(e.tool_uses.join(","))}</span>` : "";
+    line.innerHTML =
+      `<span class="prompt">&gt;</span> <span class="ts">${esc(e.timestamp)}</span> ` +
+      `${agent}<span class="model">${esc(e.model)}</span>${stop}${tools} ` +
+      `<span class="req-id">${esc(e.request_id)}</span>` +
+      (e.is_error && e.error_text ? `<span class="err-text">${esc(e.error_text)}</span>` : "");
+    return line;
+  }
+
+  function appendDebugLine(e) {
     const box = $("#debug-log");
     const empty = box.querySelector(".empty");
     if (empty) empty.remove();
-    box.insertBefore(buildDebugRow(e), box.firstChild);
-    while (box.children.length > DEBUG_MAX_ROWS) box.removeChild(box.lastChild);
+    const follow = debugFollow && isNearBottom(box);
+    box.appendChild(buildDebugLine(e));
+    while (box.children.length > DEBUG_MAX_LINES) box.removeChild(box.firstChild);
+    if (follow) box.scrollTop = box.scrollHeight;
   }
 
   function renderDebugTab(data) {
     const box = $("#debug-log");
-    const entries = data.entries || []; // 服务端按时间倒序返回，entries[0] 最新
+    // 服务端首屏按时间倒序返回；终端要按时间正序从上往下追加，最新的停在底部。
+    const entries = (data.entries || []).slice().reverse();
     box.innerHTML = "";
     if (!entries.length) {
       box.innerHTML = `<div class="empty">没有找到该项目的会话记录</div>`;
     } else {
-      for (const e of entries) box.appendChild(buildDebugRow(e));
-      debugLastTs = entries[0].timestamp;
+      for (const e of entries) {
+        box.appendChild(buildDebugLine(e));
+        debugLastTs = e.timestamp;
+      }
+      box.scrollTop = box.scrollHeight;
     }
     if (debugPollTimer) clearInterval(debugPollTimer);
     debugPollTimer = setInterval(pollDebugTab, DEBUG_POLL_MS);
@@ -189,14 +221,34 @@
   async function pollDebugTab() {
     try {
       const data = await getJSON(`/api/debug?after=${encodeURIComponent(debugLastTs)}&limit=200`);
-      // 服务端在 after 模式下按时间正序返回；逐条插到最前面，最新的自然停在最上面
+      // 服务端在 after 模式下按时间正序返回，直接依次追加即可
       for (const e of data.entries || []) {
-        prependDebugRow(e);
+        appendDebugLine(e);
         debugLastTs = e.timestamp;
       }
     } catch (e) {
       // 轮询失败静默重试，不打断已渲染的内容
     }
+  }
+
+  function setupTerminalControls() {
+    const box = $("#debug-log");
+    const followToggle = $("#follow-toggle");
+    followToggle.addEventListener("change", () => {
+      debugFollow = followToggle.checked;
+      if (debugFollow) box.scrollTop = box.scrollHeight;
+    });
+    // 用户手动往上滚时自动关闭"跟随最新"，滚回底部再自动打开
+    box.addEventListener("scroll", () => {
+      const atBottom = isNearBottom(box);
+      if (atBottom !== debugFollow) {
+        debugFollow = atBottom;
+        followToggle.checked = atBottom;
+      }
+    });
+    $("#clear-terminal").addEventListener("click", () => {
+      box.innerHTML = `<div class="empty">已清屏，等待新日志…</div>`;
+    });
   }
 
   async function loadAll() {
@@ -213,6 +265,7 @@
   }
 
   setupTabs();
+  setupTerminalControls();
   loadAll().catch((e) => {
     document.querySelector("main").innerHTML = `<div class="empty">加载失败: ${e.message}</div>`;
   });

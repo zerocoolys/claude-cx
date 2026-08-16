@@ -8,61 +8,98 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
-<header>
-  <h1>cx <span id="cx-version"></span></h1>
-  <div id="cwd" class="cwd"></div>
-  <nav id="tabs">
-    <button class="tab-btn active" data-tab="model">Model</button>
-    <button class="tab-btn" data-tab="config">Config</button>
-    <button class="tab-btn" data-tab="doctor">Doctor</button>
-    <button class="tab-btn" data-tab="debug">Debug</button>
-  </nav>
-</header>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">cx</span>
+      <span class="brand-version" id="cx-version"></span>
+    </div>
+    <nav id="tabs" class="side-nav">
+      <button class="tab-btn active" data-tab="model">
+        <span class="nav-icon">▤</span><span class="nav-label">Model</span>
+      </button>
+      <button class="tab-btn" data-tab="config">
+        <span class="nav-icon">⚙</span><span class="nav-label">Config</span>
+      </button>
+      <button class="tab-btn" data-tab="doctor">
+        <span class="nav-icon">✚</span><span class="nav-label">Doctor</span>
+      </button>
+      <button class="tab-btn" data-tab="debug">
+        <span class="nav-icon">▶</span><span class="nav-label">Debug</span>
+      </button>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="cwd" id="cwd" title=""></div>
+    </div>
+  </aside>
 
-<main>
-  <section id="tab-model" class="tab active">
-    <div class="panel">
-      <canvas id="model-chart" height="90"></canvas>
-    </div>
-    <div class="panel">
-      <table id="model-table">
-        <thead>
-          <tr><th>model</th><th>sessions</th><th>messages</th><th>input</th>
-              <th>output</th><th>cache write</th><th>cache read</th><th>total</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
+  <div class="main">
+    <header class="topbar">
+      <h1 id="page-title">Model</h1>
+      <div class="topbar-right">
+        <span class="status-dot" id="conn-dot"></span>
+        <span class="status-label" id="conn-label">live</span>
+      </div>
+    </header>
 
-  <section id="tab-config" class="tab">
-    <div class="panel">
-      <h2>配置来源</h2>
-      <table id="sources-table">
-        <thead><tr><th>scope</th><th>path</th><th>exists</th><th>keys</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="panel">
-      <h2>Provenance</h2>
-      <div id="provenance"></div>
-    </div>
-  </section>
+    <main>
+      <section id="tab-model" class="tab active">
+        <div class="stat-grid" id="model-stats"></div>
+        <div class="panel">
+          <h2>用量分布</h2>
+          <canvas id="model-chart" height="90"></canvas>
+        </div>
+        <div class="panel">
+          <h2>按模型明细</h2>
+          <table id="model-table">
+            <thead>
+              <tr><th>model</th><th>sessions</th><th>messages</th><th>input</th>
+                  <th>output</th><th>cache write</th><th>cache read</th><th>total</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
 
-  <section id="tab-doctor" class="tab">
-    <div class="panel">
-      <div id="doctor-summary" class="summary"></div>
-      <div id="doctor-findings"></div>
-    </div>
-  </section>
+      <section id="tab-config" class="tab">
+        <div class="panel">
+          <h2>配置来源</h2>
+          <table id="sources-table">
+            <thead><tr><th>scope</th><th>path</th><th>exists</th><th>keys</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>Provenance</h2>
+          <div id="provenance"></div>
+        </div>
+      </section>
 
-  <section id="tab-debug" class="tab">
-    <div class="panel">
-      <p class="hint">harness 写进会话 jsonl 里的原始请求字段：stop_reason / requestId / tool_use / 报错文本，token 用量之外的调试信息。每 3 秒自动拉取新记录。</p>
-      <div id="debug-log"></div>
-    </div>
-  </section>
-</main>
+      <section id="tab-doctor" class="tab">
+        <div class="panel">
+          <div id="doctor-summary" class="summary"></div>
+          <div id="doctor-findings"></div>
+        </div>
+      </section>
+
+      <section id="tab-debug" class="tab">
+        <div class="panel terminal-panel">
+          <div class="terminal-head">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="terminal-title">debug log</span>
+            <span class="hint">stop_reason / requestId / tool_use / 报错文本 · 每 3 秒轮询新记录</span>
+            <label class="follow-toggle">
+              <input type="checkbox" id="follow-toggle" checked>
+              <span>跟随最新</span>
+            </label>
+            <button id="clear-terminal" class="ghost-btn">清屏</button>
+          </div>
+          <div id="debug-log" class="terminal-body"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
 
 <script src="/static/app.js"></script>
 </body>
