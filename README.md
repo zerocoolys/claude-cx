@@ -11,36 +11,47 @@ Claude Code 的配置分散在最多五个层级（managed / 命令行参数 / l
 
 ## 安装
 
-只需要 Python 3.10+，不需要安装任何包：
-
 ```bash
-curl -O https://raw.githubusercontent.com/zerocoolys/claude-cx/main/cx.py
-chmod +x cx.py
-sudo ln -s "$PWD/cx.py" /usr/local/bin/cx
-```
-
-或者用 pip：
-
-```bash
-pip install git+https://github.com/zerocoolys/claude-cx.git
+uvx cx                      # 免安装直接跑
+pipx install cx-claude      # 或装到本地
 ```
 
 ## 用法
 
 ```bash
-cx                    # 完整报告
-cx --json             # 机器可读输出，适合喂给别的脚本
-cx --section perms    # 只看某一节，可重复指定
-cx --show-secrets     # 不脱敏（默认脱敏）
-cx --path ~/some/repo # 检视指定目录而非当前目录
+cx                          # 完整报告
+cx show skills               # 只看某个模块
+cx show mcp,perms,hooks     # 逗号分隔看多个
+cx doctor                   # 诊断配置问题
+cx doctor --fail-on warn    # CI 里用，warn 及以上即失败
+cx doctor --json            # 机器可读
+cx --json                   # 完整配置的机器可读输出
+cx --show-secrets           # 不脱敏（默认脱敏）
+cx --path DIR               # 检视指定目录
 ```
 
 小节名：`env` `settings` `perms` `hooks` `mcp` `memory` `agents` `commands` `skills` `plugins`
 
+`--section` 已 deprecated，等价于 `cx show <模块>`，暂不移除。
+
+### doctor
+
+`cx doctor` 跑 19 项只读检查，分四类：
+
+- `refs` —— hook 命令、MCP command、CLAUDE.md 的 `@导入` 是否指向真实存在的东西
+- `conflicts` —— managed 策略的静默覆盖、跨 scope 遮蔽、MCP 重名
+- `schema` —— JSON 语法、键放错层级、疑似拼写错误、frontmatter 缺字段
+- `security` —— `settings.local.json` 泄漏、明文密钥、过宽 allow 规则、上下文预算
+
+退出码：0 = 未触阈值，1 = 触阈值，2 = 用法错误。阈值由 `--fail-on` 控制，默认 `error`。
+
+误报可以抑制：`cx doctor --ignore schema.likely-typo`（可重复、可逗号分隔）。
+被抑制的项仍在 `--json` 输出里，标记 `ignored: true`。
+
 ## 输出样例
 
 ```
-cx 0.1.0  ·  Claude Code 配置状态
+cx 0.2.0  ·  Claude Code 配置状态
   目录      /Users/me/projects/harness
   仓库根    /Users/me/projects/harness
   CLI 版本  2.1.x
