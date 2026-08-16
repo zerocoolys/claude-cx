@@ -82,3 +82,14 @@ def disp_width(s: str) -> int:
 
 def pad(s: str, width: int) -> str:
     return s + " " * max(0, width - disp_width(s))
+
+
+def split_tokens(tokens: list[str] | None) -> list[str]:
+    """把 ["a,b", " c "] 这类可重复 + 可逗号分隔的参数摊平成 ["a", "b", "c"]。"""
+    out: list[str] = []
+    for raw in tokens or []:
+        for piece in str(raw).split(","):
+            piece = piece.strip()
+            if piece:
+                out.append(piece)
+    return out
