@@ -171,15 +171,45 @@ def render(ctx: Ctx, merged: dict, prov: dict, assets: dict, sections: set[str],
 
 # --- cx model ---------------------------------------------------------------
 _COLS = [("会话", 5), ("请求", 6), ("输入", 9), ("输出", 9),
-         ("缓存写", 9), ("缓存读", 9), ("合计", 9)]
-_NAME_W = 26
+         ("缓存写", 9), ("缓存读", 9), ("合计", 9), ("占比", 5)]
+_NAME_W = 28
+_MARK_W = 2  # 高消耗标记占的前缀宽度
+
+# 相对整体合计的占比阈值：达到即视为"高消耗"，用于醒目标记
+_HIGH_SHARE = 0.20
+_MED_SHARE = 0.08
 
 
-def _usage_row(s: ModelStat) -> str:
+def _table_width() -> int:
+    return _MARK_W + _NAME_W + sum(w for _, w in _COLS)
+
+
+def _share_mark(share: float) -> str:
+    # 两个字符宽（emoji/三角 + 空格），与占位的两个空格对齐
+    if share >= _HIGH_SHARE:
+        return C.red("🔥") + " "
+    if share >= _MED_SHARE:
+        return C.yellow("▲") + " "
+    return "  "
+
+
+def _usage_row(s: ModelStat, whole: int, colorize: bool = True) -> str:
     cells = [str(s.sessions), str(s.messages), fmt_count(s.input),
              fmt_count(s.output), fmt_count(s.cache_creation),
-             fmt_count(s.cache_read), fmt_count(s.total)]
-    return "".join(rpad(c, w) for c, (_, w) in zip(cells, _COLS))
+             fmt_count(s.cache_read), fmt_count(s.total), _pct(s.total, whole)]
+    row = "".join(rpad(c, w) for c, (_, w) in zip(cells, _COLS))
+    if not colorize or not whole:
+        return row
+    if s.total / whole >= _HIGH_SHARE:
+        row = C.bold(C.red(row))
+    elif s.total / whole >= _MED_SHARE:
+        row = C.yellow(row)
+    return row
+
+
+def _table_header(name_label: str) -> str:
+    header = " " * _MARK_W + pad(name_label, _NAME_W) + "".join(rpad(t, w) for t, w in _COLS)
+    return "  " + C.dim(header) + "\n  " + C.dim("─" * _table_width())
 
 
 def _day(ts: str | None) -> str:
@@ -207,11 +237,13 @@ def _render_agent_split(usage: Usage) -> None:
         p(C.dim("  本项目的会话里没有子 agent 记录"))
         return
     p(hr("各子 agent 用量 (token)"))
-    header = pad("agent", _NAME_W) + "".join(rpad(t, w) for t, w in _COLS)
-    p("  " + C.dim(header))
+    p(_table_header("agent"))
+    whole = usage.total.total
     for a in usage.agents:
-        p("  " + C.magenta(pad(a.model, _NAME_W)) + _usage_row(a))
-    p(C.dim("  注：子 agent 的记录在 <sessionId>/subagents/ 下，agent 名取自 attributionAgent。"))
+        mark = _share_mark(a.total / whole if whole else 0)
+        p(f"  {mark}{C.magenta(pad(a.model, _NAME_W))}{_usage_row(a, whole)}")
+    p(C.dim(f"  注：子 agent 的记录在 <sessionId>/subagents/ 下，agent 名取自 attributionAgent。"
+            f" 🔥 ≥{_HIGH_SHARE:.0%} 合计占比  ▲ ≥{_MED_SHARE:.0%}"))
 
 
 def _render_session_detail(usage: Usage) -> None:
@@ -219,21 +251,29 @@ def _render_session_detail(usage: Usage) -> None:
 
     p = print
     p(hr("会话明细"))
+    whole = usage.total.total
     rows = sorted(usage.sessions, key=lambda s: s.messages[0].timestamp if s.messages else "")
     for s in rows:
         models, total = aggregate([s])
+        share = total.total / whole if whole else 0
+        mark = _share_mark(share)
         head = C.cyan(pad(s.session_id[:8], 10))
         branch = fmt_value(s.branch or "-", 22)  # 分支名可能很长，截断免得撞列
         meta = C.dim(pad(branch, 24) + pad(s.cli_version or "-", 10))
-        p(f"  {head}{meta}{rpad(str(total.messages) + ' 请求', 10)}"
-          f"{rpad(fmt_count(total.total), 9)}"
+        total_cell = f"{rpad(str(total.messages) + ' 请求', 10)}{rpad(fmt_count(total.total), 9)}"
+        if share >= _HIGH_SHARE:
+            total_cell = C.bold(C.red(total_cell))
+        elif share >= _MED_SHARE:
+            total_cell = C.yellow(total_cell)
+        p(f"  {mark}{head}{meta}{total_cell}"
           f"  {C.dim(_minute(total.first) + ' → ' + _minute(total.last))}")
         for m in models:
-            p(f"      {pad(fmt_value(m.model, 23), 24)}"
+            p(f"        {pad(fmt_value(m.model, 23), 24)}"
               f"{rpad(str(m.messages) + ' 请求', 10)}{rpad(fmt_count(m.total), 9)}")
         for a in aggregate_agents([s]):
-            p(f"      {C.magenta(pad('↳ ' + fmt_value(a.model, 21), 24))}"
+            p(f"        {C.magenta(pad('↳ ' + fmt_value(a.model, 21), 24))}"
               f"{rpad(str(a.messages) + ' 请求', 10)}{rpad(fmt_count(a.total), 9)}")
+    p(C.dim(f"  🔥 单会话占整体 ≥{_HIGH_SHARE:.0%}  ▲ ≥{_MED_SHARE:.0%}"))
 
 
 def render_model_usage(ctx: Ctx, usage: Usage, detail: bool = False) -> None:
@@ -249,11 +289,13 @@ def render_model_usage(ctx: Ctx, usage: Usage, detail: bool = False) -> None:
         p()
         return
 
-    header = pad("模型", _NAME_W) + "".join(rpad(t, w) for t, w in _COLS)
-    p("  " + C.dim(header))
+    whole = usage.total.total
+    p(_table_header("模型"))
     for s in usage.models:
-        p("  " + C.cyan(pad(s.model, _NAME_W)) + _usage_row(s))
-    p("  " + C.bold(pad(usage.total.model, _NAME_W)) + C.bold(_usage_row(usage.total)))
+        mark = _share_mark(s.total / whole if whole else 0)
+        p(f"  {mark}{C.cyan(pad(s.model, _NAME_W))}{_usage_row(s, whole)}")
+    p("  " + " " * _MARK_W + C.bold(pad(usage.total.model, _NAME_W))
+      + C.bold(_usage_row(usage.total, whole, colorize=False)))
 
     span = f"{_day(usage.total.first)} → {_day(usage.total.last)}"
     p(C.dim(f"  时间跨度 {span}；「请求」为 API 响应次数，含子 agent。"))
