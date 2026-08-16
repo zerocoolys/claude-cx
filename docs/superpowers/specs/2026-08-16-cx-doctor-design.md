@@ -61,7 +61,9 @@ cx/doctor/render.py         # doctor 的人读输出 + JSON 输出
 
 ### 2.2 迁移方式
 
-**纯搬运，不改任何现有函数的签名或行为。** `cx/__init__.py` 把现有全部顶层名字再导出，因此 `tests/test_cx.py` 的 `import cx` + `cx.merge_with_provenance(...)` 一行不用改。
+**纯搬运，不改任何现有函数的签名或行为。** `cx/__init__.py` 把现有全部顶层名字再导出，因此 `tests/test_cx.py` 里 `import cx` + `cx.merge_with_provenance(...)` 这类**调用**一行不用改。
+
+**唯一例外（已知的 2 行改动）**：`tests/test_cx.py:60` 与 `:74` 用 `monkeypatch.setattr(cx, "managed_dirs", ...)` 打桩。拆包后 `discover_sources` 位于 `cx/discovery.py`，按自己模块的全局名字查找 `managed_dirs`，而补丁打在 `cx` 包属性上，不再生效。这 2 行须改为 `monkeypatch.setattr(cx.discovery, "managed_dirs", ...)`。这是猴补丁的目标模块变了，不是行为变更。
 
 拆包作为**独立的第一个提交**，不夹带任何 doctor 代码，出问题可单独回滚。
 
@@ -294,7 +296,7 @@ cx import / cx export       # 预留（子系统 D）
 
 ### 6.1 第一层 · 拆包的验收
 
-拆包提交的验收标准：`tests/test_cx.py` 现有 299 行**一行不改、全绿**。这是 `cx/__init__.py` 做全量再导出的唯一理由。
+拆包提交的验收标准：`tests/test_cx.py` 现有 299 行**除 2.2 节所述的 2 行猴补丁目标外一律不改，且全绿**。这是 `cx/__init__.py` 做全量再导出的理由。
 
 **这条不过，不写 doctor 的任何代码。**
 
