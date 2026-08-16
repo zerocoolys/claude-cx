@@ -141,3 +141,37 @@ def test_well_formed_hooks_are_clean():
     probe = make_probe(merged={"hooks": {"PostToolUse": [
         {"matcher": "*", "hooks": [{"type": "command", "command": "echo"}]}]}})
     assert check_hook_shape(probe) == []
+
+
+def test_url_type_hook_without_command_is_clean():
+    """cx/render.py 一直把 command 或 url 都当作合法的 hook 载荷。"""
+    probe = make_probe(merged={"hooks": {"PostToolUse": [
+        {"matcher": "*", "hooks": [
+            {"type": "url", "url": "https://example.com"}]}]}})
+    assert check_hook_shape(probe) == []
+
+
+def test_hook_entry_not_a_dict_is_still_error():
+    probe = make_probe(merged={"hooks": {"PostToolUse": [
+        {"matcher": "*", "hooks": ["not-a-dict"]}]}})
+    assert [f.id for f in check_hook_shape(probe)] == ["schema.hook-malformed"]
+
+
+def test_hook_event_value_not_a_list_is_still_error():
+    probe = make_probe(merged={"hooks": {"PostToolUse": "not-a-list"}})
+    assert [f.id for f in check_hook_shape(probe)] == ["schema.hook-malformed"]
+
+
+# --- 密钥不外泄 ---------------------------------------------------------------
+def test_malformed_matcher_does_not_leak_secret_shaped_value():
+    """matcher 项不是对象时，原本用 {m!r} 会把内容原样带出来。"""
+    sentinel = "sk-ant-veryuniquesentinel123"
+    # matcher 本身不是 dict（是个 list），触发 "matcher 项不是对象" 分支，
+    # 但其内容里嵌了一个密钥形状的键值对。
+    probe = make_probe(merged={"hooks": {"PostToolUse": [
+        [{"apiKey": sentinel}]]}})
+    findings = check_hook_shape(probe)
+    assert findings, "expected a schema.hook-malformed finding"
+    for f in findings:
+        for field_val in (f.id, f.title, f.detail, f.where, f.fix):
+            assert sentinel not in field_val

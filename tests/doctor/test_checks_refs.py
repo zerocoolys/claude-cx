@@ -69,6 +69,22 @@ def test_no_hooks_is_clean():
     assert check_hook_commands(make_probe()) == []
 
 
+def test_shell_fragment_secret_is_not_leaked_whole(monkeypatch):
+    """shell 片段降级为 info 时，命令原文可能含内联密钥，需截断而非原样带出。"""
+    sentinel = "sk-ant-veryuniquesentinel123"
+    monkeypatch.setattr("cx.doctor.checks_refs.shutil.which", lambda name: None)
+    cmd = (
+        'curl -H "X-Some-Very-Long-Header-Name-Padding-Here: yes" '
+        f'-H "Authorization: Bearer {sentinel}" https://example.com | jq'
+    )
+    probe = make_probe(merged=hooks_with(cmd))
+    findings = check_hook_commands(probe)
+    assert findings
+    for f in findings:
+        for field_val in (f.id, f.title, f.detail, f.where, f.fix):
+            assert sentinel not in field_val
+
+
 # --- MCP 命令 ---------------------------------------------------------------
 def test_mcp_stdio_command_off_path_is_error(monkeypatch):
     monkeypatch.setattr("cx.doctor.checks_refs.shutil.which", lambda name: None)

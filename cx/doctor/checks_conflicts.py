@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from cx.doctor.registry import Finding, Probe, check
-from cx.model import SCOPE_LABEL
+from cx.model import MERGE_ONLY_KEYS, SCOPE_LABEL
 
 
 def _scope_names(entries: list) -> list[str]:
@@ -17,6 +17,8 @@ def _scope_names(entries: list) -> list[str]:
 def check_managed_override(probe: Probe) -> list[Finding]:
     out: list[Finding] = []
     for path, entries in probe.prov.items():
+        if path in MERGE_ONLY_KEYS:
+            continue
         if len(entries) < 2 or entries[-1][0] != "managed":
             continue
         losers = ", ".join(_scope_names(entries[:-1]))
@@ -36,6 +38,8 @@ def check_managed_override(probe: Probe) -> list[Finding]:
 def check_shadowed_keys(probe: Probe) -> list[Finding]:
     out: list[Finding] = []
     for path, entries in probe.prov.items():
+        if path in MERGE_ONLY_KEYS:
+            continue
         if len(entries) < 2:
             continue
         if entries[-1][0] == "managed":

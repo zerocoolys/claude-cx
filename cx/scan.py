@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from cx.model import Ctx
+from cx.model import Ctx, SourceFile
 from cx.util import count_tokens_rough, load_json
 
 
@@ -106,9 +106,13 @@ def scan_mcp(ctx: Ctx, merged: dict) -> list[dict]:
     """MCP server 分布在三处：~/.claude.json (user)、~/.claude.json projects[cwd] (local)、.mcp.json (project)。"""
     out = []
 
-    user_cfg, err = load_json(ctx.home / ".claude.json")
+    user_cfg_path = ctx.home / ".claude.json"
+    user_cfg, err = load_json(user_cfg_path)
     if err:
         ctx.problems.append(f"~/.claude.json: {err}")
+        ctx.sources.append(SourceFile(
+            scope="user", path=user_cfg_path, exists=user_cfg_path.exists(), error=err
+        ))
     user_cfg = user_cfg or {}
 
     for name, spec in (user_cfg.get("mcpServers") or {}).items():
@@ -120,9 +124,13 @@ def scan_mcp(ctx: Ctx, merged: dict) -> list[dict]:
             {"name": name, "scope": "local", "source": "~/.claude.json → projects[cwd]", "spec": spec}
         )
 
-    mcp_json, err = load_json(ctx.cwd / ".mcp.json")
+    mcp_json_path = ctx.cwd / ".mcp.json"
+    mcp_json, err = load_json(mcp_json_path)
     if err:
         ctx.problems.append(f"./.mcp.json: {err} → 该文件的 MCP server 不会加载")
+        ctx.sources.append(SourceFile(
+            scope="project", path=mcp_json_path, exists=mcp_json_path.exists(), error=err
+        ))
     for name, spec in ((mcp_json or {}).get("mcpServers") or {}).items():
         out.append({"name": name, "scope": "project", "source": "./.mcp.json", "spec": spec})
 

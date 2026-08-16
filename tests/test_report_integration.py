@@ -56,6 +56,36 @@ def test_default_report_error_set_matches_doctor(broken_proj, capsys):
         assert fid in report
 
 
+@pytest.fixture
+def broken_mcp_json_proj(tmp_path, monkeypatch):
+    """.mcp.json 语法错误：曾经会被 cx 打印，重构后一度变得静默（finding #1）。"""
+    home = tmp_path / "home"
+    p = tmp_path / "proj"
+    (home / ".claude").mkdir(parents=True)
+    (p / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    (p / ".mcp.json").write_text('{"mcpServers": {,}}', encoding="utf-8")
+    return p
+
+
+def test_broken_mcp_json_is_reported_by_doctor(broken_mcp_json_proj, capsys):
+    assert main(["doctor", "--path", str(broken_mcp_json_proj), "--json"]) != 0
+    payload = json.loads(capsys.readouterr().out)
+    matches = [f for f in payload["findings"] if f["id"] == "schema.json-syntax"]
+    assert matches, "expected schema.json-syntax to fire for broken .mcp.json"
+    assert any(".mcp.json" in f["where"] for f in matches)
+
+
+def test_broken_mcp_json_is_visible_in_default_report(broken_mcp_json_proj, capsys):
+    """回归测试：cx（无子命令）之前会打印这个错误，Task 9 重构后一度变得静默。"""
+    assert main(["--path", str(broken_mcp_json_proj)]) == 0
+    out = capsys.readouterr().out
+    assert "需要注意" in out
+    assert "schema.json-syntax" in out
+    assert ".mcp.json" in out
+
+
 def test_clean_project_has_no_attention_section(tmp_path, monkeypatch, capsys):
     home = tmp_path / "home"
     p = tmp_path / "proj"

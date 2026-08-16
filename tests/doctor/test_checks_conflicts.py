@@ -27,6 +27,12 @@ def test_managed_overriding_user_is_warn():
     assert findings[0].where == "model"
 
 
+def test_merge_only_key_is_not_flagged_as_managed_override():
+    """permissions.deny 跨 scope 拼接而非覆盖，两处都仍生效，不该报 override。"""
+    probe = make_probe(prov=prov_chain("permissions.allow", "user", "managed"))
+    assert check_managed_override(probe) == []
+
+
 def test_managed_only_is_clean():
     """只有 managed 定义，没覆盖任何人，不报。"""
     assert check_managed_override(make_probe(prov=prov_chain("model", "managed"))) == []
@@ -46,6 +52,12 @@ def test_multi_scope_key_is_info():
 
 def test_single_scope_key_is_clean():
     assert check_shadowed_keys(make_probe(prov=prov_chain("model", "user"))) == []
+
+
+def test_merge_only_key_is_not_flagged_as_shadowed():
+    """permissions.deny 在 user/project 都有定义时，两份规则都在生效，不是遮蔽。"""
+    probe = make_probe(prov=prov_chain("permissions.deny", "user", "project"))
+    assert check_shadowed_keys(probe) == []
 
 
 def test_managed_chain_is_left_to_the_other_check():

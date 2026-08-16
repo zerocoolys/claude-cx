@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from cx.doctor.registry import Finding, Probe, check
+from cx.util import fmt_value, redact
 
 # 已知的顶层配置键。清单会随 Claude Code 版本漂移，因此只用于
 # 「距离为 1」的近似匹配，不用于「未知即报错」。
@@ -180,7 +181,8 @@ def check_hook_shape(probe: Probe) -> list[Finding]:
             continue
         for m in matchers:
             if not isinstance(m, dict):
-                out.append(_shape_finding(where, f"matcher 项不是对象: {m!r}"))
+                out.append(_shape_finding(
+                    where, f"matcher 项不是对象: {_safe_repr(m)}"))
                 continue
             entries = m.get("hooks")
             if not isinstance(entries, list):
@@ -188,10 +190,16 @@ def check_hook_shape(probe: Probe) -> list[Finding]:
                 continue
             for h in entries:
                 if not isinstance(h, dict):
-                    out.append(_shape_finding(where, f"hook 项不是对象: {h!r}"))
-                elif not str(h.get("command") or "").strip():
-                    out.append(_shape_finding(where, "hook 项缺少 command 字段"))
+                    out.append(_shape_finding(
+                        where, f"hook 项不是对象: {_safe_repr(h)}"))
+                elif not str(h.get("command") or h.get("url") or "").strip():
+                    out.append(_shape_finding(where, "hook 项缺少 command/url 字段"))
     return out
+
+
+def _safe_repr(value) -> str:
+    """脱敏后再截断，避免把配置里的密钥值原样塞进 finding 文本。"""
+    return fmt_value(redact(value))
 
 
 def _shape_finding(where: str, detail: str) -> Finding:

@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from cx.doctor.registry import Finding, Probe, check
+from cx.util import fmt_value
 
 # 出现这些字符就说明是 shell 片段，cx 不解析，降级为 info
 SHELL_META = "|&;<>$`\n"
@@ -49,11 +50,14 @@ def check_hook_commands(probe: Probe) -> list[Finding]:
 def _check_one_command(event: str, cmd: str) -> list[Finding]:
     where = f"hooks.{event}"
     if any(ch in cmd for ch in SHELL_META):
+        # 命令原文可能含内联密钥（如 curl -H "Authorization: Bearer sk-..."）。
+        # redact() 只按字典 key 匹配，对裸字符串无能为力，所以这里改用截断
+        # 降低（但不能消除）泄露面，而不是把整条命令原样塞进 finding。
         return [Finding(
             id="refs.hook-command-missing",
             severity="info",
             title=f"{event} hook 的命令含 shell 语法，cx 无法校验",
-            detail=f"命令是 shell 片段，cx 不做解析：{cmd}",
+            detail=f"命令是 shell 片段，cx 不做解析：{fmt_value(cmd)}",
             where=where,
             fix="若该 hook 未生效，请手动确认其中每个可执行文件都存在且可执行",
         )]
