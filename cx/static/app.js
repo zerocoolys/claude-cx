@@ -75,18 +75,16 @@
     return `<div class="agent-badges">${items}</div>`;
   }
 
-  function buildSessionCard(s) {
-    const card = document.createElement("div");
-    card.className = "session-card" + (s.active ? " active" : "");
-    card.dataset.sessionId = s.session_id;
+  // 卡片拆成两层：session-main（每次轮询整体重绘）+ session-timeline（独立管理，
+  // 轮询重绘 main 时绝不touch，展开的日志才不会跟着列表一起消失又重建造成跳动。
+  function sessionMainHTML(s) {
     const cwdName = (s.cwd || "").split("/").filter(Boolean).pop() || s.cwd || "(unknown)";
     const branch = s.branch ? `<span class="scope-tag scope-project">${esc(s.branch)}</span>` : "";
     const toolChip = s.last_tool ? `<span class="chip">tool: ${esc(s.last_tool)}</span>` : "";
     const stopChip = s.last_stop_reason
       ? `<span class="chip">stop: ${esc(s.last_stop_reason)}</span>` : "";
     const agentChip = s.last_agent ? `<span class="chip">agent: ${esc(s.last_agent)}</span>` : "";
-    const expanded = expandedSessionId === s.session_id;
-    card.innerHTML = `
+    return `
       <div class="session-head">
         <span class="status-dot${s.active ? " pulse" : " idle"}"></span>
         <span class="session-title">${esc(cwdName)}</span>
@@ -102,42 +100,96 @@
         ${buildSparklineSVG(s.token_series)}
       </div>
       <div class="session-chips">${toolChip}${stopChip}${agentChip}</div>
-      ${buildAgentBadges(s.agents)}
-      <div class="session-timeline${expanded ? " open" : ""}" id="timeline-${esc(s.session_id)}"></div>`;
-    card.querySelector(".session-head").addEventListener("click", () => {
-      expandedSessionId = expandedSessionId === s.session_id ? null : s.session_id;
-      renderSessionsList(lastSessionsData);
-    });
+      ${buildAgentBadges(s.agents)}`;
+  }
+
+  function bindCardHead(card, sessionId) {
+    card.querySelector(".session-head").addEventListener("click", () => toggleSessionTimeline(sessionId));
+  }
+
+  function toggleSessionTimeline(sessionId) {
+    const box = document.getElementById(`timeline-${sessionId}`);
+    if (expandedSessionId === sessionId) {
+      expandedSessionId = null;
+      if (box) { box.classList.remove("open"); box.innerHTML = ""; }
+      return;
+    }
+    if (expandedSessionId) {
+      const prevBox = document.getElementById(`timeline-${expandedSessionId}`);
+      if (prevBox) { prevBox.classList.remove("open"); prevBox.innerHTML = ""; }
+    }
+    expandedSessionId = sessionId;
+    loadSessionTimeline(sessionId);
+  }
+
+  function buildSessionCard(s) {
+    const card = document.createElement("div");
+    card.className = "session-card" + (s.active ? " active" : "");
+    card.dataset.sessionId = s.session_id;
+    card.innerHTML =
+      `<div class="session-main">${sessionMainHTML(s)}</div>` +
+      `<div class="session-timeline" id="timeline-${esc(s.session_id)}"></div>`;
+    bindCardHead(card, s.session_id);
     return card;
   }
 
+  function updateSessionCard(card, s) {
+    card.classList.toggle("active", !!s.active);
+    card.querySelector(".session-main").innerHTML = sessionMainHTML(s);
+    bindCardHead(card, s.session_id);
+  }
+
   let lastSessionsData = [];
+  const sessionCardEls = new Map(); // session_id -> 卡片 DOM，跨轮询复用，避免整表重建
 
   function renderSessionsList(sessions) {
     lastSessionsData = sessions;
     const list = $("#sessions-list");
-    list.innerHTML = "";
     if (!sessions.length) {
       list.innerHTML = `<div class="empty">没有找到该项目的会话记录</div>`;
+      sessionCardEls.clear();
+      expandedSessionId = null;
       return;
     }
+    if (list.querySelector(".empty")) list.innerHTML = "";
+
+    const seen = new Set();
+    let prevEl = null;
     for (const s of sessions) {
-      list.appendChild(buildSessionCard(s));
+      seen.add(s.session_id);
+      let card = sessionCardEls.get(s.session_id);
+      if (card) {
+        updateSessionCard(card, s);
+      } else {
+        card = buildSessionCard(s);
+        sessionCardEls.set(s.session_id, card);
+      }
+      const wantNext = prevEl ? prevEl.nextSibling : list.firstChild;
+      if (wantNext !== card) list.insertBefore(card, wantNext);
+      prevEl = card;
     }
-    if (expandedSessionId && sessions.some((s) => s.session_id === expandedSessionId)) {
-      loadSessionTimeline(expandedSessionId);
-    } else {
+    for (const [id, el] of sessionCardEls) {
+      if (!seen.has(id)) {
+        el.remove();
+        sessionCardEls.delete(id);
+      }
+    }
+
+    if (expandedSessionId && !seen.has(expandedSessionId)) {
       expandedSessionId = null;
     }
   }
 
   async function loadSessionTimeline(sessionId) {
-    const box = $(`#timeline-${sessionId}`);
+    const box = document.getElementById(`timeline-${sessionId}`);
     if (!box) return;
     box.classList.add("open");
-    box.innerHTML = `<div class="empty">加载中…</div>`;
+    // 已经有内容（比如轮询期间重新拉取）就先保留旧内容，等新数据到了再一次性替换，
+    // 不要先清空再显示"加载中"，那一下清空就是日志窗口"消失"的跳动来源。
+    if (!box.children.length) box.innerHTML = `<div class="empty">加载中…</div>`;
     try {
       const data = await getJSON(`/api/sessions/${encodeURIComponent(sessionId)}/timeline`);
+      if (expandedSessionId !== sessionId) return; // 拉取期间用户切换/收起了，丢弃结果
       box.innerHTML = "";
       const entries = data.entries || [];
       if (!entries.length) {
@@ -146,6 +198,7 @@
       }
       for (const e of entries) box.appendChild(buildDebugLine(e));
     } catch (err) {
+      if (expandedSessionId !== sessionId) return;
       box.innerHTML = `<div class="empty">加载失败: ${esc(err.message)}</div>`;
     }
   }
@@ -160,6 +213,7 @@
     try {
       const data = await getJSON("/api/sessions");
       renderSessionsList(data.sessions || []);
+      if (expandedSessionId) loadSessionTimeline(expandedSessionId);
     } catch (e) {
       // 轮询失败静默重试
     }
