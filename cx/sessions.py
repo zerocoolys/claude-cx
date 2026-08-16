@@ -237,6 +237,135 @@ def _under(child: str, base: Path) -> bool:
         return False
 
 
+@dataclass(frozen=True)
+class DebugEntry:
+    """一次 assistant 响应里，token 用量之外的调试字段。
+
+    isApiErrorMessage 或 model 为 <synthetic> 都算一次出错请求——前者是真实
+    API 报错，后者是本地合成的提示（认证失败等），对排障来说都值得看见，
+    跟 sessions.py 其余统计口径里把它们排除在外的处理刻意不同。
+    """
+
+    id: str             # 记录的 uuid；--follow / dashboard 轮询用它做去重
+    timestamp: str
+    session_id: str
+    agent: str          # 空串表示主线
+    model: str
+    request_id: str
+    effort: str
+    stop_reason: str
+    is_error: bool
+    error_text: str
+    tool_uses: tuple[str, ...]
+    cache_miss_reason: str
+
+
+def _content_tool_uses(content) -> tuple[str, ...]:
+    if not isinstance(content, list):
+        return ()
+    names = [item.get("name") for item in content
+             if isinstance(item, dict) and item.get("type") == "tool_use"]
+    return tuple(n for n in names if isinstance(n, str))
+
+
+def _content_text(content) -> str:
+    if not isinstance(content, list):
+        return ""
+    parts = [item.get("text", "") for item in content
+             if isinstance(item, dict) and item.get("type") == "text"]
+    return "".join(str(p) for p in parts).strip()
+
+
+def _parse_debug_entries(path: Path) -> tuple[str | None, list[DebugEntry]]:
+    """跟 parse_file 一样单遍扫描；返回 (cwd, entries)，cwd 供事后按项目过滤。"""
+    cwd: str | None = None
+    session_id = ""
+    entries: list[DebugEntry] = []
+
+    for rec in _iter_records(path):
+        if cwd is None and isinstance(rec.get("cwd"), str):
+            cwd = rec["cwd"]
+        if not session_id and isinstance(rec.get("sessionId"), str):
+            session_id = rec["sessionId"]
+        if rec.get("type") != "assistant":
+            continue
+        msg = rec.get("message")
+        if not isinstance(msg, dict):
+            continue
+        model = msg.get("model")
+        if not isinstance(model, str) or not model:
+            continue
+        content = msg.get("content")
+        diagnostics = msg.get("diagnostics")
+        cache_miss = (diagnostics.get("cache_miss_reason")
+                      if isinstance(diagnostics, dict) else None)
+        is_error = bool(rec.get("isApiErrorMessage")) or model == SYNTHETIC_MODEL
+        entries.append(DebugEntry(
+            id=str(rec.get("uuid") or f"{path.stem}-{len(entries)}"),
+            timestamp=str(rec.get("timestamp") or ""),
+            session_id=session_id or path.stem,
+            agent=_agent_name(rec),
+            model=model,
+            request_id=str(rec.get("requestId") or ""),
+            effort=str(rec.get("effort") or ""),
+            stop_reason=str(msg.get("stop_reason") or ""),
+            is_error=is_error,
+            error_text=_content_text(content) if is_error else "",
+            tool_uses=_content_tool_uses(content),
+            cache_miss_reason=json.dumps(cache_miss, ensure_ascii=False) if cache_miss else "",
+        ))
+    return cwd, entries
+
+
+def collect_debug_log(ctx: Ctx, limit: int = 200,
+                      after_ts: str | None = None) -> list[DebugEntry]:
+    """取调试记录，跨主线与子 agent；目录/cwd 过滤同 collect_sessions。
+
+    默认（after_ts 为 None）按时间倒序取最近 limit 条，给 `cx debug` 一次性查看用。
+    传 after_ts 时改成正序返回严格晚于它的新记录（最多 limit 条），
+    给 `--follow` 和 dashboard 轮询增量拉取用——时间戳字符串是 ISO 8601，
+    天然可比较排序，不需要额外的游标状态。
+    """
+    base = ctx.repo_root or ctx.cwd
+    out: list[DebugEntry] = []
+    for d in session_dirs(ctx):
+        try:
+            files = sorted(d.rglob("*.jsonl"))
+        except OSError:
+            continue
+        for f in files:
+            cwd, entries = _parse_debug_entries(f)
+            if cwd is not None and not _under(cwd, base):
+                continue
+            out.extend(entries)
+    if after_ts is not None:
+        fresh = sorted((e for e in out if e.timestamp > after_ts), key=lambda e: e.timestamp)
+        return fresh[:limit]
+    out.sort(key=lambda e: e.timestamp, reverse=True)
+    return out[:limit]
+
+
+def debug_entry_payload(e: DebugEntry) -> dict:
+    return {
+        "id": e.id,
+        "timestamp": e.timestamp,
+        "session_id": e.session_id,
+        "agent": e.agent,
+        "model": e.model,
+        "request_id": e.request_id,
+        "effort": e.effort,
+        "stop_reason": e.stop_reason,
+        "is_error": e.is_error,
+        "error_text": e.error_text,
+        "tool_uses": list(e.tool_uses),
+        "cache_miss_reason": e.cache_miss_reason,
+    }
+
+
+def debug_log_payload(entries: list[DebugEntry]) -> dict:
+    return {"entries": [debug_entry_payload(e) for e in entries]}
+
+
 def collect_sessions(ctx: Ctx) -> tuple[list[Path], list[Session]]:
     base = ctx.repo_root or ctx.cwd
     dirs = session_dirs(ctx)

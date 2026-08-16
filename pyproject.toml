@@ -33,5 +33,8 @@ Issues = "https://github.com/zerocoolys/claude-cx/issues"
 [tool.setuptools.packages.find]
 include = ["cx*"]
 
+[tool.setuptools.package-data]
+cx = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -85,6 +85,19 @@ def build_parser() -> argparse.ArgumentParser:
                              help="统计本项目各会话里每个模型的 token 用量")
     p_model.add_argument("--detail", action="store_true",
                          help="额外输出子 agent 调用与逐会话明细")
+
+    p_debug = sub.add_parser("debug", parents=[common],
+                             help="查看会话请求的调试字段 (stop_reason / requestId / 错误 / tool_use)")
+    p_debug.add_argument("--limit", type=int, default=200,
+                         help="最多显示条数 (默认: 200)")
+    p_debug.add_argument("--follow", "-f", action="store_true",
+                         help="持续输出新增的调试记录，类似 tail -f")
+
+    p_server = sub.add_parser("server", parents=[common],
+                              help="启动本地 HTTP dashboard")
+    p_server.add_argument("--host", default="127.0.0.1", help="监听地址 (默认: 127.0.0.1)")
+    p_server.add_argument("--port", type=int, default=8765, help="监听端口 (默认: 8765)")
+    p_server.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
     return ap
 
 
@@ -106,27 +119,38 @@ def build_context(args) -> tuple[Ctx, dict, dict, dict]:
     return ctx, merged, prov, assets
 
 
-def _run_doctor(args, ctx, merged, prov, assets) -> int:
+def build_doctor_payload(ctx, merged, prov, assets, budget, ignore, fail_on) -> dict:
+    """跑一轮 doctor 检查，返回可直接 json.dumps 的 payload。CLI 和 server 共用。"""
     from cx.doctor import run_checks
     from cx.doctor.registry import Probe
-    from cx.doctor.render import (
-        doctor_payload,
-        exit_code_for,
-        render_doctor,
-        split_ignored,
-    )
+    from cx.doctor.render import doctor_payload, exit_code_for, split_ignored
+
+    probe = Probe(ctx=ctx, merged=merged, prov=prov, assets=assets, budget=budget)
+    findings = run_checks(probe)
+    visible, ignored = split_ignored(findings, set(split_tokens(ignore)))
+    code = exit_code_for(visible, fail_on)
+    return doctor_payload(ctx, visible, ignored, fail_on, code)
+
+
+def _run_doctor(args, ctx, merged, prov, assets) -> int:
+    from cx.doctor.render import render_doctor
+
+    if args.json:
+        payload = build_doctor_payload(ctx, merged, prov, assets, args.budget,
+                                       args.ignore, args.fail_on)
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return payload["exit_code"]
+
+    from cx.doctor import run_checks
+    from cx.doctor.registry import Probe
+    from cx.doctor.render import exit_code_for, split_ignored
 
     probe = Probe(ctx=ctx, merged=merged, prov=prov, assets=assets,
                   budget=args.budget)
     findings = run_checks(probe)
     visible, ignored = split_ignored(findings, set(split_tokens(args.ignore)))
     code = exit_code_for(visible, args.fail_on)
-
-    if args.json:
-        payload = doctor_payload(ctx, visible, ignored, args.fail_on, code)
-        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
-    else:
-        render_doctor(visible, ignored)
+    render_doctor(visible, ignored)
     return code
 
 
@@ -149,8 +173,9 @@ def _run_model(args) -> int:
     return 0
 
 
-def _report_json(ctx, merged, prov, assets) -> int:
-    payload = {
+def build_report_payload(ctx, merged, prov, assets) -> dict:
+    """完整配置报告的 JSON payload。CLI 的 --json 和 server 的 /api/config 共用。"""
+    return {
         "cx_version": VERSION,
         "cwd": str(ctx.cwd),
         "repo_root": str(ctx.repo_root) if ctx.repo_root else None,
@@ -170,6 +195,87 @@ def _report_json(ctx, merged, prov, assets) -> int:
         "settings_local_git_status": assets["gitignore"],
         "problems": ctx.problems,
     }
+
+
+def _run_debug(args) -> int:
+    """cx debug 只读会话记录，跟 model 一样不需要走配置发现/合并那一整套。"""
+    from cx.render import render_debug_log
+    from cx.sessions import collect_debug_log, debug_log_payload
+
+    cwd = Path(args.path).resolve()
+    ctx = Ctx(cwd=cwd, repo_root=find_repo_root(cwd), home=Path.home(),
+              show_secrets=args.show_secrets)
+
+    if getattr(args, "follow", False):
+        return _run_debug_follow(ctx, args)
+
+    entries = collect_debug_log(ctx, limit=args.limit)
+    if args.json:
+        payload = {"cx_version": VERSION, **debug_log_payload(entries)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    else:
+        render_debug_log(ctx, entries)
+    return 0
+
+
+_FOLLOW_POLL_SECONDS = 1.0
+
+
+def _emit_debug_entry(e, as_json: bool) -> None:
+    # --follow 常被重定向到文件或管道，非 tty 下 stdout 是全缓冲的；
+    # 不 flush 的话新记录会在缓冲区里等半天，"实时" tail 就名不副实。
+    if as_json:
+        from cx.sessions import debug_entry_payload
+
+        print(json.dumps(debug_entry_payload(e), ensure_ascii=False, default=str))
+    else:
+        from cx.render import render_debug_entry
+
+        render_debug_entry(e)
+    sys.stdout.flush()
+
+
+def _run_debug_follow(ctx, args) -> int:
+    """轮询式 tail -f：每秒重新扫盘，只吐出比上次见过的时间戳更新的记录。
+
+    会话目录本地读写量很小，全量重扫比维护逐文件字节偏移量简单得多，
+    且天然免疫日志轮转/新文件出现——不需要额外处理。
+    """
+    import time
+
+    from cx.sessions import collect_debug_log
+    from cx.term import C
+
+    entries = collect_debug_log(ctx, limit=args.limit)
+    for e in reversed(entries):
+        _emit_debug_entry(e, args.json)
+    after_ts = entries[0].timestamp if entries else ""
+
+    if not args.json:
+        print(C.dim("  -- 等待新的调试记录 (Ctrl+C 退出) --"))
+        sys.stdout.flush()
+    try:
+        while True:
+            time.sleep(_FOLLOW_POLL_SECONDS)
+            fresh = collect_debug_log(ctx, limit=1000, after_ts=after_ts)
+            for e in fresh:
+                _emit_debug_entry(e, args.json)
+                after_ts = e.timestamp
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def _run_server(args) -> int:
+    from cx.server import serve
+
+    path = Path(args.path).resolve()
+    return serve(path, host=args.host, port=args.port,
+                show_secrets=args.show_secrets, open_browser=not args.no_open)
+
+
+def _report_json(ctx, merged, prov, assets) -> int:
+    payload = build_report_payload(ctx, merged, prov, assets)
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
     return 0
 
@@ -190,6 +296,12 @@ def main(argv=None) -> int:
 
     if args.cmd == "model":
         return _run_model(args)
+
+    if args.cmd == "debug":
+        return _run_debug(args)
+
+    if args.cmd == "server":
+        return _run_server(args)
 
     ctx, merged, prov, assets = build_context(args)
 

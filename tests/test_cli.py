@@ -145,3 +145,26 @@ def test_doctor_ignore_accepts_comma_separated(proj, stub_check, capsys):
     assert payload["summary"]["ignored"] == 1
     assert payload["summary"]["error"] == 0
     assert any(f["ignored"] for f in payload["findings"])
+
+
+# --- debug --------------------------------------------------------------
+def test_debug_subcommand_with_no_sessions(proj, capsys):
+    assert main(["debug", "--path", str(proj)]) == 0
+    assert "没有找到该项目的会话记录" in capsys.readouterr().out
+
+
+def test_debug_json_output_is_valid(proj, capsys):
+    assert main(["debug", "--path", str(proj), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["entries"] == []
+    assert "cx_version" in payload
+
+
+def test_debug_follow_prints_existing_then_waits_for_interrupt(proj, capsys, monkeypatch):
+    """--follow 是轮询循环，用假 sleep 在第一轮就抛 KeyboardInterrupt 让它退出。"""
+    def fake_sleep(_):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("time.sleep", fake_sleep)
+    assert main(["debug", "--path", str(proj), "--follow"]) == 0
+    assert "等待新的调试记录" in capsys.readouterr().out
