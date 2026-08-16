@@ -24,6 +24,7 @@ dev = ["pytest", "pytest-cov"]
 
 [project.scripts]
 cx = "cx.cli:main"
+claude-cx = "cx.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/zerocoolys/claude-cx"
