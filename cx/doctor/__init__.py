@@ -6,6 +6,10 @@
 from __future__ import annotations
 
 from cx.doctor.registry import Finding, Probe, SEVERITY_RANK, check, run_checks
-from cx.doctor import checks_refs, checks_schema  # noqa: F401  导入即注册
+from cx.doctor import (  # noqa: F401  导入即注册
+    checks_refs,
+    checks_schema,
+    checks_security,
+)
 
 __all__ = ["Finding", "Probe", "SEVERITY_RANK", "check", "run_checks"]
