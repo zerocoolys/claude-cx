@@ -31,7 +31,7 @@
   function renderModelTab(data) {
     $("#cx-version").textContent = data.cx_version ? `v${data.cx_version}` : "";
     const models = data.models || [];
-    const whole = data.total ? data.total.total : 0;
+    const whole = data.total ? data.total.total_tokens : 0;
 
     const tbody = $("#model-table tbody");
     tbody.innerHTML = "";
@@ -39,28 +39,28 @@
       tbody.innerHTML = `<tr><td colspan="8" class="empty">没有找到该项目的会话记录</td></tr>`;
     }
     for (const m of models) {
-      const share = whole ? m.total / whole : 0;
+      const share = whole ? m.total_tokens / whole : 0;
       const tr = document.createElement("tr");
       if (share >= HIGH_SHARE) tr.className = "hot";
       tr.innerHTML = `
         <td>${m.model}</td>
         <td class="num">${fmt(m.sessions)}</td>
         <td class="num">${fmt(m.messages)}</td>
-        <td class="num">${fmt(m.input)}</td>
-        <td class="num">${fmt(m.output)}</td>
-        <td class="num">${fmt(m.cache_creation)}</td>
-        <td class="num">${fmt(m.cache_read)}</td>
-        <td class="num">${fmt(m.total)}</td>`;
+        <td class="num">${fmt(m.input_tokens)}</td>
+        <td class="num">${fmt(m.output_tokens)}</td>
+        <td class="num">${fmt(m.cache_creation_tokens)}</td>
+        <td class="num">${fmt(m.cache_read_tokens)}</td>
+        <td class="num">${fmt(m.total_tokens)}</td>`;
       tbody.appendChild(tr);
     }
 
     const ctx = $("#model-chart").getContext("2d");
     const labels = models.map((m) => m.model);
     const datasets = [
-      { label: "input", data: models.map((m) => m.input), backgroundColor: "#5b9bd5" },
-      { label: "output", data: models.map((m) => m.output), backgroundColor: "#6fcf78" },
-      { label: "cache write", data: models.map((m) => m.cache_creation), backgroundColor: "#e0c341" },
-      { label: "cache read", data: models.map((m) => m.cache_read), backgroundColor: "#c77dd1" },
+      { label: "input", data: models.map((m) => m.input_tokens), backgroundColor: "#5b9bd5" },
+      { label: "output", data: models.map((m) => m.output_tokens), backgroundColor: "#6fcf78" },
+      { label: "cache write", data: models.map((m) => m.cache_creation_tokens), backgroundColor: "#e0c341" },
+      { label: "cache read", data: models.map((m) => m.cache_read_tokens), backgroundColor: "#c77dd1" },
     ];
     if (modelChart) modelChart.destroy();
     modelChart = new Chart(ctx, {
