@@ -9,7 +9,8 @@ from cx.term import C, hr, tag
 from cx.util import fmt_value, pad, redact, short
 
 
-def render(ctx: Ctx, merged: dict, prov: dict, assets: dict, sections: set[str]) -> None:
+def render(ctx: Ctx, merged: dict, prov: dict, assets: dict, sections: set[str],
+           findings=None) -> None:
     p = print
 
     if "env" in sections:
@@ -145,7 +146,21 @@ def render(ctx: Ctx, merged: dict, prov: dict, assets: dict, sections: set[str])
             state = "" if pl["enabled"] is None else (C.green("启用") if pl["enabled"] else C.dim("停用"))
             p(f"  {C.cyan(pad(pl['name'], 28))} {state:<10} {C.dim(pl['source'])}")
 
-    if ctx.problems and "env" in sections:
+    if findings is not None and "env" in sections:
+        errors = [f for f in findings if f.severity == "error"]
+        if errors:
+            p(hr("需要注意"))
+            for f in errors:
+                p(f"  {C.red('✗')} {C.cyan(f.id)}  {f.title}")
+                p(f"      {C.dim(f.where)}")
+                p(f"      {C.dim('修复')}  {f.fix}")
+            rest = len(findings) - len(errors)
+            if rest:
+                p(C.dim(f"  另有 {rest} 项 warn/info，运行 cx doctor 查看全部"))
+            else:
+                p(C.dim("  运行 cx doctor 查看完整诊断"))
+    elif findings is None and ctx.problems and "env" in sections:
+        # 兼容未传 findings 的旧调用点
         p(hr("需要注意"))
         for prob in ctx.problems:
             p(f"  {C.red('✗')} {prob}")

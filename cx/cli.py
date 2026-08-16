@@ -172,5 +172,10 @@ def main(argv=None) -> int:
     if args.json:
         return _report_json(ctx, merged, prov, assets)
 
-    render(ctx, merged, prov, assets, sections)
+    from cx.doctor import run_checks
+    from cx.doctor.registry import Probe
+
+    findings = run_checks(Probe(ctx=ctx, merged=merged, prov=prov,
+                                assets=assets, budget=args.budget))
+    render(ctx, merged, prov, assets, sections, findings=findings)
     return 0
