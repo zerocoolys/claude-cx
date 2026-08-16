@@ -197,6 +197,7 @@
         return;
       }
       for (const e of entries) box.appendChild(buildDebugLine(e));
+      box.scrollTop = box.scrollHeight;
     } catch (err) {
       if (expandedSessionId !== sessionId) return;
       box.innerHTML = `<div class="empty">加载失败: ${esc(err.message)}</div>`;
