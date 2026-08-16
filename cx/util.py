@@ -84,6 +84,20 @@ def pad(s: str, width: int) -> str:
     return s + " " * max(0, width - disp_width(s))
 
 
+def rpad(s: str, width: int) -> str:
+    """右对齐版 pad，同样按终端列宽计算。"""
+    return " " * max(0, width - disp_width(s)) + s
+
+
+def fmt_count(n: int) -> str:
+    """token 数压缩成 1.2k / 3.4M，表格才排得下。"""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n / 1000:.1f}k"
+    return f"{n / 1_000_000:.1f}M"
+
+
 def split_tokens(tokens: list[str] | None) -> list[str]:
     """把 ["a,b", " c "] 这类可重复 + 可逗号分隔的参数摊平成 ["a", "b", "c"]。"""
     out: list[str] = []

@@ -22,6 +22,9 @@ pipx install cx-claude      # 或装到本地
 cx                          # 完整报告
 cx show skills               # 只看某个模块
 cx show mcp,perms,hooks     # 逗号分隔看多个
+cx model                    # 统计本项目会话里每个模型的 token 用量
+cx model --detail           # 加上子 agent 用量与逐会话明细
+cx model --json             # 机器可读
 cx doctor                   # 诊断配置问题
 cx doctor --fail-on warn    # CI 里用，warn 及以上即失败
 cx doctor --json            # 机器可读
@@ -33,6 +36,50 @@ cx --path DIR               # 检视指定目录
 小节名：`env` `settings` `perms` `hooks` `mcp` `memory` `agents` `commands` `skills` `plugins`
 
 `--section` 已 deprecated，等价于 `cx show <模块>`，暂不移除。
+
+### model
+
+`cx model` 读 `~/.claude/projects/` 下属于当前项目的会话记录（含其中的 worktree
+和子目录），按模型汇总 token：
+
+```
+cx 0.2.0  ·  会话模型用量
+  统计范围  /Users/me/projects/harness
+  会话目录  3 个，共 4 个会话
+
+── 各模型用量 (token) ────────────────────────────────────
+  模型                       会话  请求     输入     输出   缓存写   缓存读     合计
+  claude-opus-5                 4   150     3.8k   196.4k     1.1M    19.2M    20.5M
+  claude-sonnet-5               1    44       87    64.9k   348.2k    14.8M    15.2M
+  合计                          4   194     3.9k   261.3k     1.5M    34.0M    35.7M
+```
+
+「请求」是 API 响应次数（含子 agent）。同一次响应在 jsonl 里会分多行写入，
+统计按 `message.id` 去重；本地合成的错误记录（`<synthetic>`）不计入。
+
+`--detail` 再多三块：主线 vs 子 agent 的用量占比、按 agent 名分列的用量、
+以及逐会话明细（分支、CLI 版本、时间跨度、该会话用到的模型和 agent）：
+
+```
+── 主线 vs 子 agent ──────────────────────────────
+  主线          296 请求     86.9M  24%
+  子 agent     1582 请求    273.1M  76%
+
+── 各子 agent 用量 (token) ───────────────────────
+  agent                      会话  请求  ...     合计
+  general-purpose               1  1575  ...   272.6M
+  Explore                       1     7  ...   466.0k
+
+── 会话明细 ──────────────────────────────────────
+  a385fd7f  claude/match-engine-d…  2.1.227    1814 请求   353.5M  08-15 04:50 → 08-15 13:04
+      claude-sonnet-5          1223 请求   228.7M
+      claude-opus-5             571 请求   123.7M
+      ↳ general-purpose        1575 请求   272.6M
+```
+
+子 agent 的记录不在主线 jsonl 里，而在 `<sessionId>/subagents/agent-*.jsonl`，
+agent 名取自记录的 `attributionAgent`；这些文件按 `sessionId` 归并回同一个会话，
+所以「会话数」不会被子 agent 撑大。
 
 ### doctor
 
