@@ -5,7 +5,7 @@ from pathlib import Path
 from cx.merge import effective_scope
 from cx.model import Ctx, SCOPE_LABEL, SCOPE_RANK, VERSION
 from cx.scan import claude_version
-from cx.sessions import ModelStat, Usage
+from cx.sessions import DebugEntry, ModelStat, Usage
 from cx.term import C, hr, tag
 from cx.util import fmt_count, fmt_value, pad, redact, rpad, short
 
@@ -306,3 +306,31 @@ def render_model_usage(ctx: Ctx, usage: Usage, detail: bool = False) -> None:
     else:
         p(C.dim("  加 --detail 看子 agent 与逐会话明细。"))
     p()
+
+
+def render_debug_log(ctx: Ctx, entries: list[DebugEntry]) -> None:
+    p = print
+    p(C.bold(f"cx {VERSION}") + C.dim("  ·  调试日志"))
+    if not entries:
+        p(hr("调试日志"))
+        p(C.dim("  (没有找到该项目的会话记录)"))
+        p(C.dim(f"  会话记录目录：{ctx.home}/.claude/projects"))
+        p()
+        return
+
+    p(hr(f"最近 {len(entries)} 条请求"))
+    for e in entries:
+        render_debug_entry(e)
+    p()
+
+
+def render_debug_entry(e: DebugEntry) -> None:
+    """单条调试记录，供 render_debug_log 和 `cx debug --follow` 共用。"""
+    mark = C.red("✗") if e.is_error else C.dim("·")
+    agent = C.dim(f" [{e.agent}]") if e.agent else ""
+    tools = f"  tools={','.join(e.tool_uses)}" if e.tool_uses else ""
+    stop = f"  stop={e.stop_reason}" if e.stop_reason else ""
+    print(f"  {mark} {C.dim(e.timestamp)}  {C.cyan(e.model)}{agent}{stop}{tools}")
+    if e.is_error and e.error_text:
+        text = e.error_text if len(e.error_text) <= 160 else e.error_text[:160] + "…"
+        print(f"      {C.red(text)}")

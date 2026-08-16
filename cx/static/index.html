@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cx dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+<header>
+  <h1>cx <span id="cx-version"></span></h1>
+  <div id="cwd" class="cwd"></div>
+  <nav id="tabs">
+    <button class="tab-btn active" data-tab="model">Model</button>
+    <button class="tab-btn" data-tab="config">Config</button>
+    <button class="tab-btn" data-tab="doctor">Doctor</button>
+    <button class="tab-btn" data-tab="debug">Debug</button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-model" class="tab active">
+    <div class="panel">
+      <canvas id="model-chart" height="90"></canvas>
+    </div>
+    <div class="panel">
+      <table id="model-table">
+        <thead>
+          <tr><th>model</th><th>sessions</th><th>messages</th><th>input</th>
+              <th>output</th><th>cache write</th><th>cache read</th><th>total</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-config" class="tab">
+    <div class="panel">
+      <h2>配置来源</h2>
+      <table id="sources-table">
+        <thead><tr><th>scope</th><th>path</th><th>exists</th><th>keys</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Provenance</h2>
+      <div id="provenance"></div>
+    </div>
+  </section>
+
+  <section id="tab-doctor" class="tab">
+    <div class="panel">
+      <div id="doctor-summary" class="summary"></div>
+      <div id="doctor-findings"></div>
+    </div>
+  </section>
+
+  <section id="tab-debug" class="tab">
+    <div class="panel">
+      <p class="hint">harness 写进会话 jsonl 里的原始请求字段：stop_reason / requestId / tool_use / 报错文本，token 用量之外的调试信息。每 3 秒自动拉取新记录。</p>
+      <div id="debug-log"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
