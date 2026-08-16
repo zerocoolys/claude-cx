@@ -7,6 +7,8 @@
 
   const $ = (sel) => document.querySelector(sel);
   const fmt = (n) => Number(n || 0).toLocaleString("en-US");
+  // < $0.01 时按 4 位小数显示，避免小额调用全部显示成 $0.00。
+  const fmtUsd = (n) => `$${Number(n || 0).toFixed(Number(n) < 0.01 ? 4 : 2)}`;
 
   function esc(s) {
     const div = document.createElement("div");
@@ -75,6 +77,33 @@
     return `<div class="agent-badges">${items}</div>`;
   }
 
+  // 只有用了不止一个模型的会话才值得展示分模型明细，单模型会话跟总量重复没有信息量。
+  function buildModelBadges(models) {
+    if (!models || models.length < 2) return "";
+    const items = models.map((m) =>
+      `<span class="model-badge">${esc(m.model)} × ${fmt(m.total_tokens)}</span>`).join("");
+    return `<div class="model-badges">${items}</div>`;
+  }
+
+  function buildCostStat(s) {
+    if (!s.models || !s.models.length) return "";
+    // cost_has_unpriced_model: 会话里有档位没有公开定价（如 fable），金额是下限，
+    // 不是全量——前缀 "~" 提示这一点，跟 /usage 里未知模型直接跳过不一样。
+    const prefix = s.cost_has_unpriced_model ? "~" : "";
+    return `<span class="stat">花费 <b title="${s.cost_has_unpriced_model ? "部分模型无公开定价，此为下限估算" : "按公开定价估算"}">${prefix}${fmtUsd(s.estimated_cost_usd)}</b></span>`;
+  }
+
+  function buildCacheStat(models) {
+    const totals = (models || []).reduce((a, m) => ({
+      input: a.input + (m.input_tokens || 0),
+      read: a.read + (m.cache_read_tokens || 0),
+    }), { input: 0, read: 0 });
+    const denom = totals.input + totals.read;
+    if (!denom) return "";
+    const pct = Math.round((totals.read / denom) * 100);
+    return `<span class="stat">cache 命中 <b>${pct}%</b></span>`;
+  }
+
   // 卡片拆成两层：session-main（每次轮询整体重绘）+ session-timeline（独立管理，
   // 轮询重绘 main 时绝不touch，展开的日志才不会跟着列表一起消失又重建造成跳动。
   function sessionMainHTML(s) {
@@ -89,6 +118,11 @@
     const stopChip = s.last_stop_reason
       ? `<span class="chip">stop: ${esc(s.last_stop_reason)}</span>` : "";
     const agentChip = s.last_agent ? `<span class="chip">agent: ${esc(s.last_agent)}</span>` : "";
+    const effortChip = s.last_effort ? `<span class="chip">effort: ${esc(s.last_effort)}</span>` : "";
+    const errorChip = s.error_count
+      ? `<span class="chip chip-error">${fmt(s.error_count)} 次出错</span>` : "";
+    const versionHint = s.cli_version ? `<span class="hint">CLI v${esc(s.cli_version)}</span>` : "";
+    const cacheStat = buildCacheStat(s.models);
     return `
       <div class="session-head">
         <span class="status-dot${s.active ? " pulse" : " idle"}"></span>
@@ -101,10 +135,14 @@
         <div class="session-stats">
           <span class="stat">messages <b>${fmt(s.messages)}</b></span>
           <span class="stat">tokens <b>${fmt(s.total_tokens)}</b></span>
+          ${buildCostStat(s)}
+          ${cacheStat}
+          ${versionHint}
         </div>
         ${buildSparklineSVG(s.token_series)}
       </div>
-      <div class="session-chips">${toolChip}${stopChip}${agentChip}</div>
+      <div class="session-chips">${errorChip}${toolChip}${stopChip}${agentChip}${effortChip}</div>
+      ${buildModelBadges(s.models)}
       ${buildAgentBadges(s.agents)}`;
   }
 
@@ -375,9 +413,12 @@
     const stop = e.stop_reason ? ` <span class="stop">stop=${esc(e.stop_reason)}</span>` : "";
     const tools = (e.tool_uses || []).length
       ? ` <span class="tools">tools=${esc(e.tool_uses.join(","))}</span>` : "";
+    const effort = e.effort ? ` <span class="effort">effort=${esc(e.effort)}</span>` : "";
+    const cacheMiss = e.cache_miss_reason
+      ? ` <span class="cache-miss">cache_miss=${esc(e.cache_miss_reason)}</span>` : "";
     line.innerHTML =
       `<span class="prompt">&gt;</span> <span class="ts">${esc(e.timestamp)}</span> ` +
-      `${agent}<span class="model">${esc(e.model)}</span>${stop}${tools} ` +
+      `${agent}<span class="model">${esc(e.model)}</span>${stop}${tools}${effort}${cacheMiss} ` +
       `<span class="req-id">${esc(e.request_id)}</span>` +
       (e.is_error && e.error_text ? `<span class="err-text">${esc(e.error_text)}</span>` : "");
     return line;

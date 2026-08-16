@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Iterator
 
 from cx.model import Ctx
+from cx.pricing import estimate_stat_cost_usd
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 
@@ -561,7 +562,12 @@ class SessionSummary:
     last_tool: str
     last_stop_reason: str
     last_agent: str
+    last_effort: str
+    error_count: int
     agents: tuple[AgentSummary, ...]
+    models: tuple[ModelStat, ...]
+    estimated_cost_usd: float
+    cost_has_unpriced_model: bool
     token_series: tuple[tuple[str, int], ...]
 
 
@@ -593,9 +599,12 @@ def collect_session_summaries(ctx: Ctx, now: datetime | None = None) -> list[Ses
     for s in sessions:
         entries = sorted(by_session.get(s.session_id, ()), key=lambda e: e.timestamp)
         last_entry = entries[-1] if entries else None
-        _, total = aggregate([s])
+        models, total = aggregate([s])
         agents = [AgentSummary(a.model, a.messages, a.total, a.last)
                   for a in aggregate_agents([s])]
+        # 未知档位（如 fable）的模型没有公开定价，estimate_stat_cost_usd 返回 None——
+        # 花费按已知档位求和，cost_has_unpriced_model 提示前端这不是全量估算。
+        model_costs = [estimate_stat_cost_usd(m) for m in models]
         out.append(SessionSummary(
             session_id=s.session_id,
             cwd=s.cwd,
@@ -610,7 +619,12 @@ def collect_session_summaries(ctx: Ctx, now: datetime | None = None) -> list[Ses
             last_tool=(last_entry.tool_uses[-1] if last_entry and last_entry.tool_uses else ""),
             last_stop_reason=last_entry.stop_reason if last_entry else "",
             last_agent=last_entry.agent if last_entry else "",
+            last_effort=last_entry.effort if last_entry else "",
+            error_count=sum(1 for e in entries if e.is_error),
             agents=tuple(agents),
+            models=tuple(models),
+            estimated_cost_usd=sum(c for c in model_costs if c is not None),
+            cost_has_unpriced_model=any(c is None for c in model_costs),
             token_series=_token_series(s),
         ))
     out.sort(key=lambda s: s.last or "", reverse=True)
@@ -645,7 +659,12 @@ def session_summary_payload(s: SessionSummary) -> dict:
         "last_tool": s.last_tool,
         "last_stop_reason": s.last_stop_reason,
         "last_agent": s.last_agent,
+        "last_effort": s.last_effort,
+        "error_count": s.error_count,
         "agents": [agent_summary_payload(a) for a in s.agents],
+        "models": [stat_payload(m) for m in s.models],
+        "estimated_cost_usd": round(s.estimated_cost_usd, 4),
+        "cost_has_unpriced_model": s.cost_has_unpriced_model,
         "token_series": [{"ts": ts, "total": total} for ts, total in s.token_series],
     }
 

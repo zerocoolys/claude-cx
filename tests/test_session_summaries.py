@@ -135,6 +135,60 @@ def test_summary_aggregates_messages_tokens_and_last_tool(env):
     assert summary.last_agent == ""
 
 
+def test_summary_reports_error_count_and_last_effort(env):
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, ts="2026-08-16T00:09:00.000Z", request_id="req_1"),
+    ])
+    # is_error 记录靠 isApiErrorMessage 或 model=<synthetic> 判定，见 sessions.py _parse_debug_entries
+    err = assistant_record(cwd=proj, ts="2026-08-16T00:09:10.000Z", request_id="req_err")
+    err["isApiErrorMessage"] = True
+    err["effort"] = "high"
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, ts="2026-08-16T00:09:00.000Z", request_id="req_1"),
+        err,
+    ])
+    [summary] = collect_session_summaries(ctx(), now=NOW)
+    assert summary.error_count == 1
+    assert summary.last_effort == "high"
+
+
+def test_summary_breaks_down_tokens_by_model(env):
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, ts="2026-08-16T00:09:00.000Z", request_id="req_1",
+                         model="claude-opus-5", inp=10, out=5),
+        assistant_record(cwd=proj, ts="2026-08-16T00:09:30.000Z", request_id="req_2",
+                         model="claude-sonnet-5", inp=1, out=1),
+    ])
+    [summary] = collect_session_summaries(ctx(), now=NOW)
+    by_model = {m.model: m for m in summary.models}
+    assert set(by_model) == {"claude-opus-5", "claude-sonnet-5"}
+    assert by_model["claude-opus-5"].total == 15
+    assert by_model["claude-sonnet-5"].total == 2
+
+
+def test_summary_estimates_cost_from_known_model_pricing(env):
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, ts="2026-08-16T00:09:00.000Z", request_id="req_1",
+                         model="claude-sonnet-5", inp=1_000_000, out=0),
+    ])
+    [summary] = collect_session_summaries(ctx(), now=NOW)
+    assert summary.estimated_cost_usd == pytest.approx(3.0)
+    assert summary.cost_has_unpriced_model is False
+
+
+def test_summary_flags_unpriced_model_without_treating_it_as_free(env):
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, ts="2026-08-16T00:09:00.000Z", request_id="req_1",
+                         model="claude-fable-5", inp=1_000_000, out=0),
+    ])
+    [summary] = collect_session_summaries(ctx(), now=NOW)
+    assert summary.cost_has_unpriced_model is True
+
+
 def test_summary_includes_subagent_tree(env):
     home, proj, ctx = env
     write_session(home, proj, "s1", [
