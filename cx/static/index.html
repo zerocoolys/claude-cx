@@ -15,7 +15,10 @@
       <span class="brand-version" id="cx-version"></span>
     </div>
     <nav id="tabs" class="side-nav">
-      <button class="tab-btn active" data-tab="model">
+      <button class="tab-btn active" data-tab="sessions">
+        <span class="nav-icon">●</span><span class="nav-label">Sessions</span>
+      </button>
+      <button class="tab-btn" data-tab="model">
         <span class="nav-icon">▤</span><span class="nav-label">Model</span>
       </button>
       <button class="tab-btn" data-tab="config">
@@ -35,7 +38,7 @@
 
   <div class="main">
     <header class="topbar">
-      <h1 id="page-title">Model</h1>
+      <h1 id="page-title">Sessions</h1>
       <div class="topbar-right">
         <span class="status-dot" id="conn-dot"></span>
         <span class="status-label" id="conn-label">live</span>
@@ -43,7 +46,14 @@
     </header>
 
     <main>
-      <section id="tab-model" class="tab active">
+      <section id="tab-sessions" class="tab active">
+        <div class="hint" style="margin-bottom: 12px;">
+          活跃 = 最后一条消息在 5 分钟内 · 每 4 秒刷新一次
+        </div>
+        <div id="sessions-list"></div>
+      </section>
+
+      <section id="tab-model" class="tab">
         <div class="stat-grid" id="model-stats"></div>
         <div class="panel">
           <h2>用量分布</h2>

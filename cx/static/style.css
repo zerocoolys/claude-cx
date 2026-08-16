@@ -119,6 +119,80 @@ body {
   background: var(--project);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--project) 20%, transparent);
 }
+.status-dot.idle { background: var(--dim); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dim) 15%, transparent); }
+.status-dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--project) 20%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--project) 8%, transparent); }
+}
+
+/* --- Sessions tab: 会话卡片列表 ------------------------------------------ */
+
+.session-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+}
+.session-card.active { border-color: color-mix(in srgb, var(--project) 40%, var(--border)); }
+
+.session-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.session-title { font-weight: 600; }
+.session-id {
+  color: var(--dim);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+.session-time { margin-left: auto; }
+
+.session-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 10px;
+}
+.session-stats { display: flex; gap: 16px; font-size: 12px; color: var(--dim); }
+.session-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+.sparkline { width: 140px; height: 28px; color: var(--accent); flex: 0 0 auto; }
+
+.session-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chip {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.agent-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.agent-badge {
+  background: color-mix(in srgb, var(--managed) 16%, transparent);
+  color: var(--managed);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.session-timeline {
+  display: none;
+  margin-top: 10px;
+  background: #05070a;
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 40vh;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.session-timeline.open { display: block; }
 
 main { padding: 24px 28px 40px; max-width: 1180px; }
 
