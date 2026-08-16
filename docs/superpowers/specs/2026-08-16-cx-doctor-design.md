@@ -63,7 +63,15 @@ cx/doctor/render.py         # doctor 的人读输出 + JSON 输出
 
 **纯搬运，不改任何现有函数的签名或行为。** `cx/__init__.py` 把现有全部顶层名字再导出，因此 `tests/test_cx.py` 里 `import cx` + `cx.merge_with_provenance(...)` 这类**调用**一行不用改。
 
-**唯一例外（已知的 2 行改动）**：`tests/test_cx.py:60` 与 `:74` 用 `monkeypatch.setattr(cx, "managed_dirs", ...)` 打桩。拆包后 `discover_sources` 位于 `cx/discovery.py`，按自己模块的全局名字查找 `managed_dirs`，而补丁打在 `cx` 包属性上，不再生效。这 2 行须改为 `monkeypatch.setattr(cx.discovery, "managed_dirs", ...)`。这是猴补丁的目标模块变了，不是行为变更。
+**已知的两处例外**：
+
+1. **猴补丁目标（2 行）**：`tests/test_cx.py:60` 与 `:74` 用 `monkeypatch.setattr(cx, "managed_dirs", ...)` 打桩。拆包后 `discover_sources` 位于 `cx/discovery.py`，按自己模块的全局名字查找 `managed_dirs`，而补丁打在 `cx` 包属性上，不再生效。这 2 行须改为 `monkeypatch.setattr(cx.discovery, "managed_dirs", ...)`。这是猴补丁的目标模块变了，不是行为变更。
+
+2. **CLI 冒烟测试的入口（2 处）**：`test_json_output_is_valid` 与 `test_nonexistent_path_exits_nonzero` 用 `subprocess.run([sys.executable, str(repo_root / "cx.py"), ...])` 直接跑脚本文件。`cx.py` 被删除后这条路径不复存在，须改为 `[sys.executable, "-m", "cx", ...]` 并加 `cwd=str(repo_root)`（`-m` 依赖 cwd 进 `sys.path`）。这两个测试的意图是「CLI 端到端能跑」，`-m cx` 是拆包后等价的入口。
+
+   附带修正：`test_nonexistent_path_exits_nonzero` 此前只是巧合通过——Python 自身「文件不存在」的退出码恰为 2，与 cx 的用法错误码相同。改用 `-m cx` 后它才真正验证 cx 的退出码语义。
+
+   **遗留缺口**：这两个测试改后不再覆盖 `[project.scripts]` 入口点（即 `pipx install` 后 `cx` 命令本身可用）。这条路径目前无测试覆盖。
 
 拆包作为**独立的第一个提交**，不夹带任何 doctor 代码，出问题可单独回滚。
 
@@ -296,7 +304,7 @@ cx import / cx export       # 预留（子系统 D）
 
 ### 6.1 第一层 · 拆包的验收
 
-拆包提交的验收标准：`tests/test_cx.py` 现有 299 行**除 2.2 节所述的 2 行猴补丁目标外一律不改，且全绿**。这是 `cx/__init__.py` 做全量再导出的理由。
+拆包提交的验收标准：`tests/test_cx.py` 现有 299 行**除 2.2 节所述的两处例外（猴补丁目标、CLI 冒烟入口）外一律不改，且全绿**。这是 `cx/__init__.py` 做全量再导出的理由。
 
 **这条不过，不写 doctor 的任何代码。**
 
