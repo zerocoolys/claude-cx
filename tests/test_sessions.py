@@ -285,6 +285,29 @@ def test_session_records_branch_and_cli_version(env):
     assert s.cli_version == "2.1.229"
 
 
+def test_session_branch_uses_latest_when_renamed_mid_session(env):
+    """同一 worktree 目录里分支被重命名/切换过，取最后一次出现的名字而非第一次。"""
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        dict(assistant("a", "m", out=1, cwd=str(proj)), gitBranch="claude/old-name"),
+        dict(assistant("b", "m", out=1, cwd=str(proj)), gitBranch="claude/new-name"),
+    ])
+    s = collect_usage(ctx()).sessions[0]
+    assert s.branch == "claude/new-name"
+
+
+def test_session_records_custom_title(env):
+    """custom-title 记录（sidebar 任务列表用的人写标题）跟 gitBranch 分开存。"""
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        assistant("a", "m", out=1, cwd=str(proj), gitBranch="claude/some-slug"),
+        {"type": "custom-title", "customTitle": "github-action 名称不匹配"},
+    ])
+    s = collect_usage(ctx()).sessions[0]
+    assert s.custom_title == "github-action 名称不匹配"
+    assert s.branch == "claude/some-slug"
+
+
 def test_detail_payload_carries_per_session_rows(env):
     home, proj, ctx = env
     write_session(home, proj, "s1", [

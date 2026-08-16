@@ -78,7 +78,12 @@
   // 卡片拆成两层：session-main（每次轮询整体重绘）+ session-timeline（独立管理，
   // 轮询重绘 main 时绝不touch，展开的日志才不会跟着列表一起消失又重建造成跳动。
   function sessionMainHTML(s) {
+    // worktree 目录一旦被复用（同一目录后来 checkout 了别的分支/任务），目录名
+    // 就跟当前会话实际在做的事对不上了。标题优先级：人写的 custom_title
+    // （sidebar 任务列表那个名字，来自 jsonl 里的 custom-title 记录）> 分支名
+    // > 目录名兜底。分支单独当 tag 展示，不重复塞进标题里。
     const cwdName = (s.cwd || "").split("/").filter(Boolean).pop() || s.cwd || "(unknown)";
+    const title = s.custom_title || s.branch || cwdName;
     const branch = s.branch ? `<span class="scope-tag scope-project">${esc(s.branch)}</span>` : "";
     const toolChip = s.last_tool ? `<span class="chip">tool: ${esc(s.last_tool)}</span>` : "";
     const stopChip = s.last_stop_reason
@@ -87,7 +92,7 @@
     return `
       <div class="session-head">
         <span class="status-dot${s.active ? " pulse" : " idle"}"></span>
-        <span class="session-title">${esc(cwdName)}</span>
+        <span class="session-title" title="${esc(s.cwd || "")}">${esc(title)}</span>
         ${branch}
         <span class="session-id">${esc(s.session_id.slice(-8))}</span>
         <span class="session-time hint">${esc(relTime(s.last))}</span>

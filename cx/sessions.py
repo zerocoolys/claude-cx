@@ -80,6 +80,7 @@ class Session:
     messages: tuple[Message, ...]
     branch: str = ""
     cli_version: str = ""
+    custom_title: str = ""
     files: tuple[Path, ...] = ()
 
 
@@ -148,6 +149,7 @@ def parse_file(path: Path) -> Session:
     session_id = ""
     branch = ""
     cli_version = ""
+    custom_title = ""
     by_id: dict[str, Message] = {}
 
     for rec in _iter_records(path):
@@ -155,10 +157,16 @@ def parse_file(path: Path) -> Session:
             cwd = rec["cwd"]
         if not session_id and isinstance(rec.get("sessionId"), str):
             session_id = rec["sessionId"]
-        if not branch and isinstance(rec.get("gitBranch"), str):
+        if isinstance(rec.get("gitBranch"), str) and rec["gitBranch"]:
+            # 取最后一次出现的分支名，而非第一次：同一个 worktree 目录可能
+            # 在会话过程中被重命名或切换到别的分支，first-seen 会显示过期的名字
+            # （dashboard Sessions tab 的卡片标题就靠这个字段，见 static/app.js）。
             branch = rec["gitBranch"]
         if not cli_version and isinstance(rec.get("version"), str):
             cli_version = rec["version"]
+        if rec.get("type") == "custom-title" and isinstance(rec.get("customTitle"), str):
+            # 人写的会话标题（sidebar 任务列表里那个），跟 gitBranch 同理取最后一次。
+            custom_title = rec["customTitle"]
         if rec.get("type") != "assistant" or rec.get("isApiErrorMessage"):
             continue
         msg = rec.get("message")
@@ -184,7 +192,7 @@ def parse_file(path: Path) -> Session:
 
     return Session(path=path, session_id=session_id or path.stem, cwd=cwd,
                    messages=tuple(by_id.values()), branch=branch,
-                   cli_version=cli_version, files=(path,))
+                   cli_version=cli_version, custom_title=custom_title, files=(path,))
 
 
 # 保留旧名字：单文件解析
@@ -220,6 +228,7 @@ def merge_files(parsed: list[Session]) -> list[Session]:
             messages=tuple(by_id.values()),
             branch=next((p.branch for p in parts if p.branch), ""),
             cli_version=next((p.cli_version for p in parts if p.cli_version), ""),
+            custom_title=next((p.custom_title for p in parts if p.custom_title), ""),
             files=tuple(p.path for p in parts),
         ))
     return out
@@ -481,6 +490,7 @@ def session_payload(s: Session) -> dict:
         "files": [str(f) for f in s.files],
         "cwd": s.cwd,
         "branch": s.branch,
+        "custom_title": s.custom_title,
         "cli_version": s.cli_version,
         "messages": total.messages,
         "total_tokens": total.total,
@@ -541,6 +551,7 @@ class SessionSummary:
     session_id: str
     cwd: str | None
     branch: str
+    custom_title: str
     cli_version: str
     active: bool
     messages: int
@@ -589,6 +600,7 @@ def collect_session_summaries(ctx: Ctx, now: datetime | None = None) -> list[Ses
             session_id=s.session_id,
             cwd=s.cwd,
             branch=s.branch,
+            custom_title=s.custom_title,
             cli_version=s.cli_version,
             active=session_active(total.last, now),
             messages=total.messages,
@@ -623,6 +635,7 @@ def session_summary_payload(s: SessionSummary) -> dict:
         "session_id": s.session_id,
         "cwd": s.cwd,
         "branch": s.branch,
+        "custom_title": s.custom_title,
         "cli_version": s.cli_version,
         "active": s.active,
         "messages": s.messages,
