@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="抑制指定 finding id，可重复、可逗号分隔")
     p_doc.add_argument("--budget", type=int,
                        help="CLAUDE.md 常驻 token 阈值 (默认: 20000)")
+
+    p_model = sub.add_parser("model", parents=[common],
+                             help="统计本项目各会话里每个模型的 token 用量")
+    p_model.add_argument("--detail", action="store_true",
+                         help="额外输出子 agent 调用与逐会话明细")
     return ap
 
 
@@ -125,6 +130,25 @@ def _run_doctor(args, ctx, merged, prov, assets) -> int:
     return code
 
 
+def _run_model(args) -> int:
+    """cx model 只读会话记录，不需要走配置发现/合并那一整套。"""
+    from cx.render import render_model_usage
+    from cx.sessions import collect_usage, usage_payload
+
+    cwd = Path(args.path).resolve()
+    ctx = Ctx(cwd=cwd, repo_root=find_repo_root(cwd), home=Path.home(),
+              show_secrets=args.show_secrets)
+    usage = collect_usage(ctx)
+    detail = getattr(args, "detail", False)
+
+    if args.json:
+        payload = {"cx_version": VERSION, **usage_payload(usage, detail)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    else:
+        render_model_usage(ctx, usage, detail)
+    return 0
+
+
 def _report_json(ctx, merged, prov, assets) -> int:
     payload = {
         "cx_version": VERSION,
@@ -163,6 +187,9 @@ def main(argv=None) -> int:
     except ValueError as e:
         print(f"cx: {e}", file=sys.stderr)
         return 2
+
+    if args.cmd == "model":
+        return _run_model(args)
 
     ctx, merged, prov, assets = build_context(args)
 

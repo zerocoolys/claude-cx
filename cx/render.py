@@ -5,8 +5,9 @@ from pathlib import Path
 from cx.merge import effective_scope
 from cx.model import Ctx, SCOPE_LABEL, SCOPE_RANK, VERSION
 from cx.scan import claude_version
+from cx.sessions import ModelStat, Usage
 from cx.term import C, hr, tag
-from cx.util import fmt_value, pad, redact, short
+from cx.util import fmt_count, fmt_value, pad, redact, rpad, short
 
 
 def render(ctx: Ctx, merged: dict, prov: dict, assets: dict, sections: set[str],
@@ -165,4 +166,101 @@ def render(ctx: Ctx, merged: dict, prov: dict, assets: dict, sections: set[str],
         for prob in ctx.problems:
             p(f"  {C.red('✗')} {prob}")
 
+    p()
+
+
+# --- cx model ---------------------------------------------------------------
+_COLS = [("会话", 5), ("请求", 6), ("输入", 9), ("输出", 9),
+         ("缓存写", 9), ("缓存读", 9), ("合计", 9)]
+_NAME_W = 26
+
+
+def _usage_row(s: ModelStat) -> str:
+    cells = [str(s.sessions), str(s.messages), fmt_count(s.input),
+             fmt_count(s.output), fmt_count(s.cache_creation),
+             fmt_count(s.cache_read), fmt_count(s.total)]
+    return "".join(rpad(c, w) for c, (_, w) in zip(cells, _COLS))
+
+
+def _day(ts: str | None) -> str:
+    return (ts or "")[:10]
+
+
+def _minute(ts: str | None) -> str:
+    """2026-08-16T07:57:10.626Z → 08-16 07:57"""
+    return (ts or "")[5:16].replace("T", " ")
+
+
+def _pct(part: int, whole: int) -> str:
+    return f"{part * 100 / whole:.0f}%" if whole else "0%"
+
+
+def _render_agent_split(usage: Usage) -> None:
+    p = print
+    p(hr("主线 vs 子 agent"))
+    for label, stat in (("主线", usage.main), ("子 agent", usage.sub)):
+        share = _pct(stat.total, usage.total.total)
+        p(f"  {pad(label, 10)}{rpad(str(stat.messages) + ' 请求', 12)}"
+          f"{rpad(fmt_count(stat.total), 10)}{C.dim('  ' + share)}")
+
+    if not usage.agents:
+        p(C.dim("  本项目的会话里没有子 agent 记录"))
+        return
+    p(hr("各子 agent 用量 (token)"))
+    header = pad("agent", _NAME_W) + "".join(rpad(t, w) for t, w in _COLS)
+    p("  " + C.dim(header))
+    for a in usage.agents:
+        p("  " + C.magenta(pad(a.model, _NAME_W)) + _usage_row(a))
+    p(C.dim("  注：子 agent 的记录在 <sessionId>/subagents/ 下，agent 名取自 attributionAgent。"))
+
+
+def _render_session_detail(usage: Usage) -> None:
+    from cx.sessions import aggregate, aggregate_agents
+
+    p = print
+    p(hr("会话明细"))
+    rows = sorted(usage.sessions, key=lambda s: s.messages[0].timestamp if s.messages else "")
+    for s in rows:
+        models, total = aggregate([s])
+        head = C.cyan(pad(s.session_id[:8], 10))
+        branch = fmt_value(s.branch or "-", 22)  # 分支名可能很长，截断免得撞列
+        meta = C.dim(pad(branch, 24) + pad(s.cli_version or "-", 10))
+        p(f"  {head}{meta}{rpad(str(total.messages) + ' 请求', 10)}"
+          f"{rpad(fmt_count(total.total), 9)}"
+          f"  {C.dim(_minute(total.first) + ' → ' + _minute(total.last))}")
+        for m in models:
+            p(f"      {pad(fmt_value(m.model, 23), 24)}"
+              f"{rpad(str(m.messages) + ' 请求', 10)}{rpad(fmt_count(m.total), 9)}")
+        for a in aggregate_agents([s]):
+            p(f"      {C.magenta(pad('↳ ' + fmt_value(a.model, 21), 24))}"
+              f"{rpad(str(a.messages) + ' 请求', 10)}{rpad(fmt_count(a.total), 9)}")
+
+
+def render_model_usage(ctx: Ctx, usage: Usage, detail: bool = False) -> None:
+    p = print
+    p(C.bold(f"cx {VERSION}") + C.dim("  ·  会话模型用量"))
+    p(f"  统计范围  {usage.base}")
+    p(f"  会话目录  {len(usage.dirs)} 个，共 {len(usage.sessions)} 个会话")
+
+    p(hr("各模型用量 (token)"))
+    if not usage.models:
+        p(C.dim("  (没有找到该项目的会话记录)"))
+        p(C.dim(f"  会话记录目录：{ctx.home}/.claude/projects"))
+        p()
+        return
+
+    header = pad("模型", _NAME_W) + "".join(rpad(t, w) for t, w in _COLS)
+    p("  " + C.dim(header))
+    for s in usage.models:
+        p("  " + C.cyan(pad(s.model, _NAME_W)) + _usage_row(s))
+    p("  " + C.bold(pad(usage.total.model, _NAME_W)) + C.bold(_usage_row(usage.total)))
+
+    span = f"{_day(usage.total.first)} → {_day(usage.total.last)}"
+    p(C.dim(f"  时间跨度 {span}；「请求」为 API 响应次数，含子 agent。"))
+
+    if detail:
+        _render_agent_split(usage)
+        _render_session_detail(usage)
+    else:
+        p(C.dim("  加 --detail 看子 agent 与逐会话明细。"))
     p()

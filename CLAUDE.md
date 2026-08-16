@@ -35,7 +35,8 @@ pip install -e ".[dev]"    # 本地安装，暴露 cx 命令，并装上 pytest 
 | `cx/discovery.py` | 按 scope 收集配置文件 |
 | `cx/merge.py` | 带 provenance 的合并 |
 | `cx/scan.py` | md 资产 / 记忆 / MCP / 插件扫描 |
-| `cx/render.py` | 默认报告渲染 |
+| `cx/sessions.py` | 解析 `~/.claude/projects/**/*.jsonl`，按模型 / 子 agent 聚合用量 |
+| `cx/render.py` | 默认报告渲染 + `cx model` 表格 |
 | `cx/cli.py` | 子命令分发与入口 |
 | `cx/doctor/` | 诊断引擎，见下 |
 
@@ -59,3 +60,9 @@ pip install -e ".[dev]"    # 本地安装，暴露 cx 命令，并装上 pytest 
 
 `tests/doctor/conftest.py` 的 `make_probe(**overrides)` 构造默认全空的
 `Probe`，测试只覆盖自己关心的字段。
+
+`tests/test_sessions.py` 覆盖会话统计。四个必须钉住的语义：同一 `message.id`
+的多行只算一次（一次响应会分块写入，每行都带**累计** usage）、`<synthetic>`
+与 `isApiErrorMessage` 记录不计入、编码前缀相同的邻居项目（`/proj` 与
+`/proj-other`）要靠记录里的 `cwd` 排除、以及 `<sessionId>/subagents/agent-*.jsonl`
+要按 `sessionId` 并回主线会话（漏读会少算一大截用量，并回错了会虚增会话数）。
