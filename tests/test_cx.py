@@ -57,7 +57,7 @@ def test_managed_beats_everything(env, monkeypatch):
     home, proj = env
     managed = proj.parent / "managed"
     managed.mkdir()
-    monkeypatch.setattr(cx, "managed_dirs", lambda: [managed])
+    monkeypatch.setattr(cx.discovery, "managed_dirs", lambda: [managed])
     write(home / ".claude" / "settings.json", {"model": "opus"})
     write(proj / ".claude" / "settings.local.json", {"model": "haiku"})
     write(managed / "managed-settings.json", {"model": "sonnet"})
@@ -71,7 +71,7 @@ def test_managed_dropin_merges_alphabetically(env, monkeypatch):
     home, proj = env
     managed = proj.parent / "managed"
     (managed / "managed-settings.d").mkdir(parents=True)
-    monkeypatch.setattr(cx, "managed_dirs", lambda: [managed])
+    monkeypatch.setattr(cx.discovery, "managed_dirs", lambda: [managed])
     write(managed / "managed-settings.json", {"model": "base"})
     write(managed / "managed-settings.d" / "10-a.json", {"model": "ten"})
     write(managed / "managed-settings.d" / "20-b.json", {"model": "twenty"})
@@ -256,9 +256,10 @@ def test_memory_layers_and_imports(env):
 def test_json_output_is_valid(env, tmp_path):
     home, proj = env
     write(proj / ".claude" / "settings.json", {"model": "sonnet"})
-    script = Path(__file__).resolve().parents[1] / "cx.py"
+    repo_root = Path(__file__).resolve().parents[1]
     r = subprocess.run(
-        [sys.executable, str(script), "--path", str(proj), "--json"],
+        [sys.executable, "-m", "cx", "--path", str(proj), "--json"],
+        cwd=str(repo_root),
         capture_output=True, text=True, env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
     )
     assert r.returncode == 0
@@ -268,9 +269,10 @@ def test_json_output_is_valid(env, tmp_path):
 
 
 def test_nonexistent_path_exits_nonzero(tmp_path):
-    script = Path(__file__).resolve().parents[1] / "cx.py"
+    repo_root = Path(__file__).resolve().parents[1]
     r = subprocess.run(
-        [sys.executable, str(script), "--path", str(tmp_path / "nope")],
+        [sys.executable, "-m", "cx", "--path", str(tmp_path / "nope")],
+        cwd=str(repo_root),
         capture_output=True, text=True,
     )
     assert r.returncode == 2

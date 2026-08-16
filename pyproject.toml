@@ -20,14 +20,14 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-cx = "cx:main"
+cx = "cx.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/zerocoolys/claude-cx"
 Issues = "https://github.com/zerocoolys/claude-cx/issues"
 
-[tool.setuptools]
-py-modules = ["cx"]
+[tool.setuptools.packages.find]
+include = ["cx*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
