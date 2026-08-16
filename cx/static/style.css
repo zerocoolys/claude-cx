@@ -171,11 +171,23 @@ body {
   padding: 2px 8px;
   border-radius: 10px;
 }
+.chip-error {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+  color: var(--error);
+}
 
-.agent-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.agent-badges, .model-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .agent-badge {
   background: color-mix(in srgb, var(--managed) 16%, transparent);
   color: var(--managed);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.model-badge {
+  background: color-mix(in srgb, var(--user) 16%, transparent);
+  color: var(--user);
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 10px;
@@ -337,6 +349,8 @@ tr.hot td { color: var(--warn); }
 .term-line .agent { color: var(--managed); }
 .term-line .stop { color: var(--dim); }
 .term-line .tools { color: var(--project); }
+.term-line .effort { color: var(--accent); }
+.term-line .cache-miss { color: var(--local); }
 .term-line .req-id { color: #4b5566; }
 .term-line.error { color: var(--error); }
 .term-line.error .err-text { color: var(--error); display: block; padding-left: 18px; }
