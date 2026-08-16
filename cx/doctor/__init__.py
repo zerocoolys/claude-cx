@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from cx.doctor.registry import Finding, Probe, SEVERITY_RANK, check, run_checks
 from cx.doctor import (  # noqa: F401  导入即注册
+    checks_conflicts,
     checks_refs,
     checks_schema,
     checks_security,
