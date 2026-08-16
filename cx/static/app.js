@@ -8,6 +8,25 @@
   const $ = (sel) => document.querySelector(sel);
   const fmt = (n) => Number(n || 0).toLocaleString("en-US");
 
+  function esc(s) {
+    const div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
+  }
+
+  // 相对时间：给 Sessions tab 的卡片标题用。时间戳是 ISO 8601 UTC。
+  function relTime(ts) {
+    if (!ts) return "";
+    const then = new Date(ts).getTime();
+    if (Number.isNaN(then)) return "";
+    const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+    if (diffSec < 5) return "刚刚";
+    if (diffSec < 60) return `${diffSec}秒前`;
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}分钟前`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}小时前`;
+    return `${Math.floor(diffSec / 86400)}天前`;
+  }
+
   function setupTabs() {
     document.querySelectorAll(".tab-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -24,6 +43,126 @@
     const res = await fetch(url);
     if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
     return res.json();
+  }
+
+  // --- Sessions tab: 活跃会话列表 ------------------------------------------
+  // 卡片式列表，每 4 秒整体重拉重渲染；展开的时间线面板状态靠 expandedSessionId
+  // 记住，重渲染后如果还在列表里就保持展开并重新拉一次它的 timeline。
+  const SESSIONS_POLL_MS = 4000;
+  let sessionsPollTimer = null;
+  let expandedSessionId = null;
+
+  function buildSparklineSVG(series) {
+    if (!series || series.length < 2) return "";
+    const values = series.map((p) => p.total);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+    const points = series.map((p, i) => {
+      const x = (i / (series.length - 1)) * 100;
+      const y = 28 - ((p.total - min) / span) * 26;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    return `<svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none">
+      <polyline points="${points}" fill="none" stroke="currentColor" stroke-width="2" />
+    </svg>`;
+  }
+
+  function buildAgentBadges(agents) {
+    if (!agents || !agents.length) return "";
+    const items = agents.map((a) =>
+      `<span class="agent-badge">${esc(a.agent)} × ${fmt(a.messages)}</span>`).join("");
+    return `<div class="agent-badges">${items}</div>`;
+  }
+
+  function buildSessionCard(s) {
+    const card = document.createElement("div");
+    card.className = "session-card" + (s.active ? " active" : "");
+    card.dataset.sessionId = s.session_id;
+    const cwdName = (s.cwd || "").split("/").filter(Boolean).pop() || s.cwd || "(unknown)";
+    const branch = s.branch ? `<span class="scope-tag scope-project">${esc(s.branch)}</span>` : "";
+    const toolChip = s.last_tool ? `<span class="chip">tool: ${esc(s.last_tool)}</span>` : "";
+    const stopChip = s.last_stop_reason
+      ? `<span class="chip">stop: ${esc(s.last_stop_reason)}</span>` : "";
+    const agentChip = s.last_agent ? `<span class="chip">agent: ${esc(s.last_agent)}</span>` : "";
+    const expanded = expandedSessionId === s.session_id;
+    card.innerHTML = `
+      <div class="session-head">
+        <span class="status-dot${s.active ? " pulse" : " idle"}"></span>
+        <span class="session-title">${esc(cwdName)}</span>
+        ${branch}
+        <span class="session-id">${esc(s.session_id.slice(-8))}</span>
+        <span class="session-time hint">${esc(relTime(s.last))}</span>
+      </div>
+      <div class="session-body">
+        <div class="session-stats">
+          <span class="stat">messages <b>${fmt(s.messages)}</b></span>
+          <span class="stat">tokens <b>${fmt(s.total_tokens)}</b></span>
+        </div>
+        ${buildSparklineSVG(s.token_series)}
+      </div>
+      <div class="session-chips">${toolChip}${stopChip}${agentChip}</div>
+      ${buildAgentBadges(s.agents)}
+      <div class="session-timeline${expanded ? " open" : ""}" id="timeline-${esc(s.session_id)}"></div>`;
+    card.querySelector(".session-head").addEventListener("click", () => {
+      expandedSessionId = expandedSessionId === s.session_id ? null : s.session_id;
+      renderSessionsList(lastSessionsData);
+    });
+    return card;
+  }
+
+  let lastSessionsData = [];
+
+  function renderSessionsList(sessions) {
+    lastSessionsData = sessions;
+    const list = $("#sessions-list");
+    list.innerHTML = "";
+    if (!sessions.length) {
+      list.innerHTML = `<div class="empty">没有找到该项目的会话记录</div>`;
+      return;
+    }
+    for (const s of sessions) {
+      list.appendChild(buildSessionCard(s));
+    }
+    if (expandedSessionId && sessions.some((s) => s.session_id === expandedSessionId)) {
+      loadSessionTimeline(expandedSessionId);
+    } else {
+      expandedSessionId = null;
+    }
+  }
+
+  async function loadSessionTimeline(sessionId) {
+    const box = $(`#timeline-${sessionId}`);
+    if (!box) return;
+    box.classList.add("open");
+    box.innerHTML = `<div class="empty">加载中…</div>`;
+    try {
+      const data = await getJSON(`/api/sessions/${encodeURIComponent(sessionId)}/timeline`);
+      box.innerHTML = "";
+      const entries = data.entries || [];
+      if (!entries.length) {
+        box.innerHTML = `<div class="empty">没有调用记录</div>`;
+        return;
+      }
+      for (const e of entries) box.appendChild(buildDebugLine(e));
+    } catch (err) {
+      box.innerHTML = `<div class="empty">加载失败: ${esc(err.message)}</div>`;
+    }
+  }
+
+  function renderSessionsTab(data) {
+    renderSessionsList(data.sessions || []);
+    if (sessionsPollTimer) clearInterval(sessionsPollTimer);
+    sessionsPollTimer = setInterval(pollSessionsTab, SESSIONS_POLL_MS);
+  }
+
+  async function pollSessionsTab() {
+    try {
+      const data = await getJSON("/api/sessions");
+      renderSessionsList(data.sessions || []);
+    } catch (e) {
+      // 轮询失败静默重试
+    }
   }
 
   // --- Model tab --------------------------------------------------------
@@ -165,12 +304,6 @@
   let debugPollTimer = null;
   let debugFollow = true;
 
-  function esc(s) {
-    const div = document.createElement("div");
-    div.textContent = s == null ? "" : String(s);
-    return div.innerHTML;
-  }
-
   function isNearBottom(box) {
     return box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   }
@@ -252,12 +385,14 @@
   }
 
   async function loadAll() {
-    const [model, config, doctor, debug] = await Promise.all([
+    const [sessions, model, config, doctor, debug] = await Promise.all([
+      getJSON("/api/sessions"),
       getJSON("/api/model"),
       getJSON("/api/config"),
       getJSON("/api/doctor"),
       getJSON("/api/debug"),
     ]);
+    renderSessionsTab(sessions);
     renderModelTab(model);
     renderConfigTab(config);
     renderDoctorTab(doctor);

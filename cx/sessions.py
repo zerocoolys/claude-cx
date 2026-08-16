@@ -17,12 +17,21 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 from cx.model import Ctx
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
+
+# dashboard Sessions tab 的"活跃"判定窗口：最后一条消息在这么多秒内算 active。
+# 这是纯粹基于时间戳的启发式——cx 只读 jsonl，没有进程存活信号，超过窗口
+# 不代表 Claude Code 真的退出了，只代表"最近没有新消息"。
+ACTIVE_WINDOW_SECONDS = 300
+
+# 每个 session 的 token 用量曲线最多采样这么多个点，避免会话很长时 payload 太大。
+MAX_SERIES_POINTS = 40
 
 # model 为 <synthetic> 的记录是本地合成的错误提示（如认证失败），没有真实用量
 SYNTHETIC_MODEL = "<synthetic>"
@@ -317,7 +326,7 @@ def _parse_debug_entries(path: Path) -> tuple[str | None, list[DebugEntry]]:
     return cwd, entries
 
 
-def collect_debug_log(ctx: Ctx, limit: int = 200,
+def collect_debug_log(ctx: Ctx, limit: int | None = 200,
                       after_ts: str | None = None) -> list[DebugEntry]:
     """取调试记录，跨主线与子 agent；目录/cwd 过滤同 collect_sessions。
 
@@ -325,6 +334,9 @@ def collect_debug_log(ctx: Ctx, limit: int = 200,
     传 after_ts 时改成正序返回严格晚于它的新记录（最多 limit 条），
     给 `--follow` 和 dashboard 轮询增量拉取用——时间戳字符串是 ISO 8601，
     天然可比较排序，不需要额外的游标状态。
+
+    limit=None 表示不截断，返回全部记录——按 session 分组统计（Sessions tab）
+    需要完整历史，不能只看最近 limit 条。
     """
     base = ctx.repo_root or ctx.cwd
     out: list[DebugEntry] = []
@@ -340,9 +352,9 @@ def collect_debug_log(ctx: Ctx, limit: int = 200,
             out.extend(entries)
     if after_ts is not None:
         fresh = sorted((e for e in out if e.timestamp > after_ts), key=lambda e: e.timestamp)
-        return fresh[:limit]
+        return fresh if limit is None else fresh[:limit]
     out.sort(key=lambda e: e.timestamp, reverse=True)
-    return out[:limit]
+    return out if limit is None else out[:limit]
 
 
 def debug_entry_payload(e: DebugEntry) -> dict:
@@ -493,3 +505,137 @@ def usage_payload(usage: Usage, detail: bool = False) -> dict:
         payload["agents"] = [stat_payload(a, "agent") for a in usage.agents]
         payload["session_detail"] = [session_payload(s) for s in usage.sessions]
     return payload
+
+
+# --- dashboard Sessions tab：实时会话摘要 -----------------------------------------
+#
+# 跟上面的 Usage/ModelStat 口径不同，这组函数关心的是"现在每个会话在做什么"，
+# 而不是历史用量汇总：谁活跃、最近调用了什么工具、子 agent 分布、用量曲线。
+# 全部基于 collect_sessions() / collect_debug_log() 的既有结果二次聚合，不
+# 重新解析文件。
+
+
+def session_active(last_ts: str | None, now: datetime | None = None,
+                   window: int = ACTIVE_WINDOW_SECONDS) -> bool:
+    """最后一条消息在 window 秒内算 active。空/非法时间戳一律 False。"""
+    if not last_ts:
+        return False
+    try:
+        ts = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return (now - ts).total_seconds() <= window
+
+
+@dataclass(frozen=True)
+class AgentSummary:
+    name: str
+    messages: int
+    tokens: int
+    last: str | None
+
+
+@dataclass(frozen=True)
+class SessionSummary:
+    session_id: str
+    cwd: str | None
+    branch: str
+    cli_version: str
+    active: bool
+    messages: int
+    total_tokens: int
+    first: str | None
+    last: str | None
+    last_tool: str
+    last_stop_reason: str
+    last_agent: str
+    agents: tuple[AgentSummary, ...]
+    token_series: tuple[tuple[str, int], ...]
+
+
+def _token_series(s: Session) -> tuple[tuple[str, int], ...]:
+    """会话内按时间正序的累计 token 曲线，降采样到最多 MAX_SERIES_POINTS 个点。"""
+    msgs = sorted(s.messages, key=lambda m: m.timestamp)
+    points: list[tuple[str, int]] = []
+    cumulative = 0
+    for m in msgs:
+        cumulative += m.total
+        points.append((m.timestamp, cumulative))
+    if len(points) <= MAX_SERIES_POINTS:
+        return tuple(points)
+    step = len(points) / MAX_SERIES_POINTS
+    sampled = [points[int(i * step)] for i in range(MAX_SERIES_POINTS)]
+    if sampled[-1] != points[-1]:
+        sampled.append(points[-1])
+    return tuple(sampled)
+
+
+def collect_session_summaries(ctx: Ctx, now: datetime | None = None) -> list[SessionSummary]:
+    """按会话聚合出 Sessions tab 要展示的摘要，按最后活动时间降序排列。"""
+    _, sessions = collect_sessions(ctx)
+    by_session: dict[str, list[DebugEntry]] = {}
+    for e in collect_debug_log(ctx, limit=None):
+        by_session.setdefault(e.session_id, []).append(e)
+
+    out = []
+    for s in sessions:
+        entries = sorted(by_session.get(s.session_id, ()), key=lambda e: e.timestamp)
+        last_entry = entries[-1] if entries else None
+        _, total = aggregate([s])
+        agents = [AgentSummary(a.model, a.messages, a.total, a.last)
+                  for a in aggregate_agents([s])]
+        out.append(SessionSummary(
+            session_id=s.session_id,
+            cwd=s.cwd,
+            branch=s.branch,
+            cli_version=s.cli_version,
+            active=session_active(total.last, now),
+            messages=total.messages,
+            total_tokens=total.total,
+            first=total.first,
+            last=total.last,
+            last_tool=(last_entry.tool_uses[-1] if last_entry and last_entry.tool_uses else ""),
+            last_stop_reason=last_entry.stop_reason if last_entry else "",
+            last_agent=last_entry.agent if last_entry else "",
+            agents=tuple(agents),
+            token_series=_token_series(s),
+        ))
+    out.sort(key=lambda s: s.last or "", reverse=True)
+    return out
+
+
+def session_timeline_payload(ctx: Ctx, session_id: str, limit: int = 300) -> dict:
+    """单个 session 的完整调用时间线（正序），跟 Debug tab 同一种 entry 形状。"""
+    entries = sorted(
+        (e for e in collect_debug_log(ctx, limit=None) if e.session_id == session_id),
+        key=lambda e: e.timestamp,
+    )
+    return {"entries": [debug_entry_payload(e) for e in entries[-limit:]]}
+
+
+def agent_summary_payload(a: AgentSummary) -> dict:
+    return {"agent": a.name, "messages": a.messages, "total_tokens": a.tokens, "last": a.last}
+
+
+def session_summary_payload(s: SessionSummary) -> dict:
+    return {
+        "session_id": s.session_id,
+        "cwd": s.cwd,
+        "branch": s.branch,
+        "cli_version": s.cli_version,
+        "active": s.active,
+        "messages": s.messages,
+        "total_tokens": s.total_tokens,
+        "first": s.first,
+        "last": s.last,
+        "last_tool": s.last_tool,
+        "last_stop_reason": s.last_stop_reason,
+        "last_agent": s.last_agent,
+        "agents": [agent_summary_payload(a) for a in s.agents],
+        "token_series": [{"ts": ts, "total": total} for ts, total in s.token_series],
+    }
+
+
+def sessions_summary_payload(summaries: list[SessionSummary]) -> dict:
+    return {"sessions": [session_summary_payload(s) for s in summaries]}

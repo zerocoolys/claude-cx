@@ -17,6 +17,8 @@ from cx.server import (  # noqa: E402
     debug_log_payload_for,
     doctor_payload_for,
     model_payload,
+    session_timeline_payload_for,
+    sessions_payload,
 )
 
 
@@ -223,3 +225,118 @@ def test_unknown_route_is_404(running_server):
     with pytest.raises(urllib.error.HTTPError) as e:
         _get(running_server + "/nope")
     assert e.value.code == 404
+
+
+# --- /api/sessions --------------------------------------------------------------
+
+def test_sessions_payload_empty_project_has_no_sessions():
+    payload = sessions_payload(Path("/does-not-matter"), show_secrets=False)
+    assert payload["sessions"] == []
+
+
+def test_api_sessions_returns_json(running_server):
+    status, payload = _get_json(running_server + "/api/sessions")
+    assert status == 200
+    assert payload["sessions"] == []
+
+
+def test_api_sessions_reflects_active_and_idle(proj_with_home):
+    from datetime import datetime, timedelta, timezone
+
+    home, proj = proj_with_home
+    from cx.sessions import encode_project_dir
+
+    d = home / ".claude" / "projects" / encode_project_dir(proj)
+    d.mkdir(parents=True, exist_ok=True)
+
+    def rec(session_id, ts):
+        return {
+            "sessionId": session_id, "type": "assistant", "timestamp": ts,
+            "cwd": str(proj), "requestId": f"req-{session_id}",
+            "message": {
+                "id": f"m-{session_id}", "model": "claude-opus-5", "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+                "content": [{"type": "text", "text": "hi"}],
+            },
+        }
+
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    old = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    (d / "s-active.jsonl").write_text(
+        json.dumps(rec("s-active", recent)) + "\n", encoding="utf-8")
+    (d / "s-idle.jsonl").write_text(
+        json.dumps(rec("s-idle", old)) + "\n", encoding="utf-8")
+
+    httpd = create_server(proj, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        status, payload = _get_json(base + "/api/sessions")
+        assert status == 200
+        by_id = {s["session_id"]: s for s in payload["sessions"]}
+        assert by_id["s-active"]["active"] is True
+        assert by_id["s-idle"]["active"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
+
+
+def test_api_session_timeline_returns_scoped_entries(proj_with_home):
+    home, proj = proj_with_home
+    from cx.sessions import encode_project_dir
+
+    d = home / ".claude" / "projects" / encode_project_dir(proj)
+    d.mkdir(parents=True, exist_ok=True)
+
+    def rec(session_id, req_id):
+        return {
+            "sessionId": session_id,
+            "type": "assistant",
+            "timestamp": "2026-08-16T00:00:01.000Z",
+            "cwd": str(proj),
+            "requestId": req_id,
+            "message": {
+                "id": req_id, "model": "claude-opus-5", "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+                "content": [{"type": "text", "text": "hi"}],
+            },
+        }
+
+    (d / "s1.jsonl").write_text(json.dumps(rec("s1", "req_s1")) + "\n", encoding="utf-8")
+    (d / "s2.jsonl").write_text(json.dumps(rec("s2", "req_s2")) + "\n", encoding="utf-8")
+
+    httpd = create_server(proj, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        status, payload = _get_json(base + "/api/sessions/s1/timeline")
+        assert status == 200
+        assert [e["request_id"] for e in payload["entries"]] == ["req_s1"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
+
+
+def test_api_session_timeline_unknown_id_returns_empty(running_server):
+    status, payload = _get_json(running_server + "/api/sessions/no-such-id/timeline")
+    assert status == 200
+    assert payload["entries"] == []
+
+
+def test_session_timeline_payload_for_matches_direct_call(proj_with_home):
+    from cx.discovery import find_repo_root
+    from cx.model import Ctx as _Ctx
+    from cx.sessions import session_timeline_payload
+
+    home, proj = proj_with_home
+    ctx = _Ctx(cwd=proj, repo_root=find_repo_root(proj), home=home)
+    direct = session_timeline_payload(ctx, "s1")
+    via_server = session_timeline_payload_for(proj, show_secrets=False, session_id="s1", limit=300)
+    assert direct["entries"] == via_server["entries"]

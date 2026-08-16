@@ -17,7 +17,15 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 from cx.model import VERSION
-from cx.sessions import collect_debug_log, collect_usage, debug_log_payload, usage_payload
+from cx.sessions import (
+    collect_debug_log,
+    collect_session_summaries,
+    collect_usage,
+    debug_log_payload,
+    session_timeline_payload,
+    sessions_summary_payload,
+    usage_payload,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -71,6 +79,25 @@ def debug_log_payload_for(path: Path, show_secrets: bool, limit: int,
     return {"cx_version": VERSION, **debug_log_payload(entries)}
 
 
+def sessions_payload(path: Path, show_secrets: bool) -> dict:
+    from cx.discovery import find_repo_root
+    from cx.model import Ctx
+
+    ctx = Ctx(cwd=path, repo_root=find_repo_root(path), home=Path.home(),
+              show_secrets=show_secrets)
+    return {"cx_version": VERSION, **sessions_summary_payload(collect_session_summaries(ctx))}
+
+
+def session_timeline_payload_for(path: Path, show_secrets: bool, session_id: str,
+                                 limit: int) -> dict:
+    from cx.discovery import find_repo_root
+    from cx.model import Ctx
+
+    ctx = Ctx(cwd=path, repo_root=find_repo_root(path), home=Path.home(),
+              show_secrets=show_secrets)
+    return {"cx_version": VERSION, **session_timeline_payload(ctx, session_id, limit)}
+
+
 def _parse_limit(raw: str, default: int = 200) -> int:
     try:
         return int(raw)
@@ -113,6 +140,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_json(debug_log_payload_for(self.server.cx_path,
                                                        self.server.show_secrets,
                                                        limit, after_ts))
+            elif route == "/api/sessions":
+                self._serve_json(sessions_payload(self.server.cx_path,
+                                                  self.server.show_secrets))
+            elif route.startswith("/api/sessions/") and route.endswith("/timeline"):
+                session_id = route[len("/api/sessions/"):-len("/timeline")].strip("/")
+                limit = _parse_limit(query.get("limit", ["300"])[0], 300)
+                self._serve_json(session_timeline_payload_for(self.server.cx_path,
+                                                               self.server.show_secrets,
+                                                               session_id, limit))
             else:
                 self.send_error(404, "Not Found")
         except Exception as e:  # noqa: BLE001 - 转成 500，不让 handler 崩掉线程
