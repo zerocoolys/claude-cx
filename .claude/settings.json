@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest:*)",
+      "Bash(python3 cx.py:*)",
+      "Bash(pip install -e .)",
+      "Bash(pip install pytest)"
+    ],
+    "deny": [
+      "Bash(pip install --user:*)",
+      "Bash(python -m build:*)",
+      "Bash(twine upload:*)"
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cx-claude"
+version = "0.1.0"
+description = "一屏看清当前目录下 Claude Code 的生效配置，每一项都标注来源 scope"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["claude", "claude-code", "cli", "configuration"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Debuggers",
+]
+dependencies = []
+
+[project.scripts]
+cx = "cx:main"
+
+[project.urls]
+Homepage = "https://github.com/zerocoolys/claude-cx"
+Issues = "https://github.com/zerocoolys/claude-cx/issues"
+
+[tool.setuptools]
+py-modules = ["cx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
