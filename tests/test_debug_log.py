@@ -212,3 +212,46 @@ def test_entry_has_stable_id_from_uuid(env):
     _dump(d / "s1.jsonl", "s1", [rec])
     entries = collect_debug_log(ctx())
     assert entries[0].id == "fixed-uuid-123"
+
+
+# --- token 用量与花费 --------------------------------------------------------
+def test_entry_carries_token_usage_and_cost(env):
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, model="claude-sonnet-5", extra_message={
+            "usage": {"input_tokens": 100, "output_tokens": 50,
+                      "cache_creation_input_tokens": 10, "cache_read_input_tokens": 20},
+        }),
+    ])
+    e = collect_debug_log(ctx())[0]
+    assert e.input_tokens == 100
+    assert e.output_tokens == 50
+    assert e.cache_creation_tokens == 10
+    assert e.cache_read_tokens == 20
+    assert e.cost_usd is not None and e.cost_usd > 0
+
+
+def test_unpriced_model_has_no_cost(env):
+    home, proj, ctx = env
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, model="claude-fable-5"),
+    ])
+    assert collect_debug_log(ctx())[0].cost_usd is None
+
+
+def test_split_response_chunks_merge_into_one_entry(env):
+    """同一 message.id 的多个分块（思考 + 工具调用）应合并成一条记录，
+    而不是把同一份 usage 重复展示两次。"""
+    home, proj, ctx = env
+    ts = "2026-08-16T00:00:01.000Z"
+    shared_msg = {"id": "shared-msg-1"}
+    write_session(home, proj, "s1", [
+        assistant_record(cwd=proj, ts=ts, content=[{"type": "thinking", "text": "..."}],
+                         extra_message=shared_msg),
+        assistant_record(cwd=proj, ts=ts, content=[
+            {"type": "tool_use", "name": "Read", "input": {}},
+        ], extra_message=shared_msg),
+    ])
+    entries = collect_debug_log(ctx())
+    assert len(entries) == 1
+    assert entries[0].tool_uses == ("Read",)

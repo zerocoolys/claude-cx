@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 from cx.model import Ctx
-from cx.pricing import estimate_stat_cost_usd
+from cx.pricing import estimate_cost_usd, estimate_stat_cost_usd
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 
@@ -276,7 +276,14 @@ class DebugEntry:
     is_error: bool
     error_text: str
     tool_uses: tuple[str, ...]
+    tool_calls: tuple[dict, ...]  # 名字 + 入参明细，供 dashboard 展开查看
+    text: str                     # 助手输出的文字部分（非工具调用），同样供展开查看
     cache_miss_reason: str
+    input_tokens: int
+    output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
+    cost_usd: float | None        # 定价表查不到型号时为 None，不能当 0 花费
 
 
 def _content_tool_uses(content) -> tuple[str, ...]:
@@ -285,6 +292,28 @@ def _content_tool_uses(content) -> tuple[str, ...]:
     names = [item.get("name") for item in content
              if isinstance(item, dict) and item.get("type") == "tool_use"]
     return tuple(n for n in names if isinstance(n, str))
+
+
+# 单个工具调用参数序列化后保留的最大字符数，避免一次 Write 整个大文件把 payload 撑爆
+_TOOL_INPUT_PREVIEW_LIMIT = 2000
+
+
+def _content_tool_calls(content) -> tuple[dict, ...]:
+    """工具调用的完整明细（名字 + 入参），供 dashboard 展开查看用。"""
+    if not isinstance(content, list):
+        return ()
+    calls = []
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "tool_use":
+            continue
+        name = item.get("name")
+        if not isinstance(name, str):
+            continue
+        raw = json.dumps(item.get("input", {}), ensure_ascii=False)
+        truncated = len(raw) > _TOOL_INPUT_PREVIEW_LIMIT
+        preview = raw[:_TOOL_INPUT_PREVIEW_LIMIT] + "…" if truncated else raw
+        calls.append({"name": name, "input": preview, "truncated": truncated})
+    return tuple(calls)
 
 
 def _content_text(content) -> str:
@@ -296,10 +325,17 @@ def _content_text(content) -> str:
 
 
 def _parse_debug_entries(path: Path) -> tuple[str | None, list[DebugEntry]]:
-    """跟 parse_file 一样单遍扫描；返回 (cwd, entries)，cwd 供事后按项目过滤。"""
+    """跟 parse_file 一样单遍扫描；返回 (cwd, entries)，cwd 供事后按项目过滤。
+
+    一次 API 响应会按内容分块拆成多条 assistant 记录（同一个 message.id），
+    每条都带着同一份完整 usage——不去重合并的话，token/花费会在每个分块上
+    重复出现，看着像是分别消耗了那么多。这里按 message.id 把同一响应的分块
+    合并成一条 entry（工具调用、文字拼接），usage 本来就相同，直接复用即可。
+    """
     cwd: str | None = None
     session_id = ""
     entries: list[DebugEntry] = []
+    entry_by_msg_id: dict[str, int] = {}
 
     for rec in _iter_records(path):
         if cwd is None and isinstance(rec.get("cwd"), str):
@@ -319,6 +355,30 @@ def _parse_debug_entries(path: Path) -> tuple[str | None, list[DebugEntry]]:
         cache_miss = (diagnostics.get("cache_miss_reason")
                       if isinstance(diagnostics, dict) else None)
         is_error = bool(rec.get("isApiErrorMessage")) or model == SYNTHETIC_MODEL
+        tool_uses = _content_tool_uses(content)
+        tool_calls = _content_tool_calls(content)
+        text = _content_text(content) if not is_error else ""
+
+        msg_id = msg.get("id")
+        prev_idx = entry_by_msg_id.get(msg_id) if isinstance(msg_id, str) else None
+        if prev_idx is not None:
+            prev = entries[prev_idx]
+            entries[prev_idx] = replace(
+                prev,
+                tool_uses=prev.tool_uses + tool_uses,
+                tool_calls=prev.tool_calls + tool_calls,
+                text=f"{prev.text}\n{text}".strip() if text else prev.text,
+                stop_reason=str(msg.get("stop_reason") or "") or prev.stop_reason,
+            )
+            continue
+
+        usage = msg.get("usage")
+        input_tokens = _int(usage.get("input_tokens")) if isinstance(usage, dict) else 0
+        output_tokens = _int(usage.get("output_tokens")) if isinstance(usage, dict) else 0
+        cache_creation_tokens = (_int(usage.get("cache_creation_input_tokens"))
+                                  if isinstance(usage, dict) else 0)
+        cache_read_tokens = (_int(usage.get("cache_read_input_tokens"))
+                              if isinstance(usage, dict) else 0)
         entries.append(DebugEntry(
             id=str(rec.get("uuid") or f"{path.stem}-{len(entries)}"),
             timestamp=str(rec.get("timestamp") or ""),
@@ -330,9 +390,19 @@ def _parse_debug_entries(path: Path) -> tuple[str | None, list[DebugEntry]]:
             stop_reason=str(msg.get("stop_reason") or ""),
             is_error=is_error,
             error_text=_content_text(content) if is_error else "",
-            tool_uses=_content_tool_uses(content),
+            tool_uses=tool_uses,
+            tool_calls=tool_calls,
+            text=text,
             cache_miss_reason=json.dumps(cache_miss, ensure_ascii=False) if cache_miss else "",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cost_usd=estimate_cost_usd(model, input_tokens, output_tokens,
+                                        cache_creation_tokens, cache_read_tokens),
         ))
+        if isinstance(msg_id, str):
+            entry_by_msg_id[msg_id] = len(entries) - 1
     return cwd, entries
 
 
@@ -380,7 +450,15 @@ def debug_entry_payload(e: DebugEntry) -> dict:
         "is_error": e.is_error,
         "error_text": e.error_text,
         "tool_uses": list(e.tool_uses),
+        "tool_calls": list(e.tool_calls),
+        "text": e.text,
         "cache_miss_reason": e.cache_miss_reason,
+        "input_tokens": e.input_tokens,
+        "output_tokens": e.output_tokens,
+        "cache_creation_tokens": e.cache_creation_tokens,
+        "cache_read_tokens": e.cache_read_tokens,
+        "total_tokens": e.input_tokens + e.output_tokens + e.cache_creation_tokens + e.cache_read_tokens,
+        "cost_usd": e.cost_usd,
     }
 
 
