@@ -29,15 +29,19 @@
     return `${Math.floor(diffSec / 86400)}天前`;
   }
 
+  function switchToTab(name) {
+    const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+    if (!btn) return;
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    btn.classList.add("active");
+    $(`#tab-${name}`).classList.add("active");
+    $("#page-title").textContent = btn.querySelector(".nav-label").textContent;
+  }
+
   function setupTabs() {
     document.querySelectorAll(".tab-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-        document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-        btn.classList.add("active");
-        $(`#tab-${btn.dataset.tab}`).classList.add("active");
-        $("#page-title").textContent = btn.querySelector(".nav-label").textContent;
-      });
+      btn.addEventListener("click", () => switchToTab(btn.dataset.tab));
     });
   }
 
@@ -48,11 +52,11 @@
   }
 
   // --- Sessions tab: 活跃会话列表 ------------------------------------------
-  // 卡片式列表，每 4 秒整体重拉重渲染；展开的时间线面板状态靠 expandedSessionId
-  // 记住，重渲染后如果还在列表里就保持展开并重新拉一次它的 timeline。
+  // 卡片式列表，每 4 秒整体重拉重渲染。点击卡片不再原地展开时间线（那份状态
+  // 每次轮询都要重建一次，跟 Debug tab 是两套重复的日志视图）——改成跳转到
+  // Debug tab 并把它筛到这个 session，日志展示统一到一个地方。
   const SESSIONS_POLL_MS = 4000;
   let sessionsPollTimer = null;
-  let expandedSessionId = null;
 
   function buildSparklineSVG(series) {
     if (!series || series.length < 2) return "";
@@ -104,15 +108,18 @@
     return `<span class="stat">cache 命中 <b>${pct}%</b></span>`;
   }
 
-  // 卡片拆成两层：session-main（每次轮询整体重绘）+ session-timeline（独立管理，
-  // 轮询重绘 main 时绝不touch，展开的日志才不会跟着列表一起消失又重建造成跳动。
-  function sessionMainHTML(s) {
-    // worktree 目录一旦被复用（同一目录后来 checkout 了别的分支/任务），目录名
-    // 就跟当前会话实际在做的事对不上了。标题优先级：人写的 custom_title
-    // （sidebar 任务列表那个名字，来自 jsonl 里的 custom-title 记录）> 分支名
-    // > 目录名兜底。分支单独当 tag 展示，不重复塞进标题里。
+  // worktree 目录一旦被复用（同一目录后来 checkout 了别的分支/任务），目录名
+  // 就跟当前会话实际在做的事对不上了。标题优先级：人写的 custom_title
+  // （sidebar 任务列表那个名字，来自 jsonl 里的 custom-title 记录）> 分支名
+  // > 目录名兜底。Sessions 卡片和 Debug tab 的 session 下拉框共用同一套标题
+  // 规则，不然同一个 session 在两处显示成不一样的名字。
+  function sessionDisplayTitle(s) {
     const cwdName = (s.cwd || "").split("/").filter(Boolean).pop() || s.cwd || "(unknown)";
-    const title = s.custom_title || s.branch || cwdName;
+    return s.custom_title || s.branch || cwdName;
+  }
+
+  function sessionMainHTML(s) {
+    const title = sessionDisplayTitle(s);
     const branch = s.branch ? `<span class="scope-tag scope-project">${esc(s.branch)}</span>` : "";
     const toolChip = s.last_tool ? `<span class="chip">tool: ${esc(s.last_tool)}</span>` : "";
     const stopChip = s.last_stop_reason
@@ -147,31 +154,14 @@
   }
 
   function bindCardHead(card, sessionId) {
-    card.querySelector(".session-head").addEventListener("click", () => toggleSessionTimeline(sessionId));
-  }
-
-  function toggleSessionTimeline(sessionId) {
-    const box = document.getElementById(`timeline-${sessionId}`);
-    if (expandedSessionId === sessionId) {
-      expandedSessionId = null;
-      if (box) { box.classList.remove("open"); box.innerHTML = ""; }
-      return;
-    }
-    if (expandedSessionId) {
-      const prevBox = document.getElementById(`timeline-${expandedSessionId}`);
-      if (prevBox) { prevBox.classList.remove("open"); prevBox.innerHTML = ""; }
-    }
-    expandedSessionId = sessionId;
-    loadSessionTimeline(sessionId);
+    card.querySelector(".session-head").addEventListener("click", () => openSessionInDebug(sessionId));
   }
 
   function buildSessionCard(s) {
     const card = document.createElement("div");
     card.className = "session-card" + (s.active ? " active" : "");
     card.dataset.sessionId = s.session_id;
-    card.innerHTML =
-      `<div class="session-main">${sessionMainHTML(s)}</div>` +
-      `<div class="session-timeline" id="timeline-${esc(s.session_id)}"></div>`;
+    card.innerHTML = `<div class="session-main">${sessionMainHTML(s)}</div>`;
     bindCardHead(card, s.session_id);
     return card;
   }
@@ -182,8 +172,8 @@
     bindCardHead(card, s.session_id);
   }
 
-  let lastSessionsData = [];
   const sessionCardEls = new Map(); // session_id -> 卡片 DOM，跨轮询复用，避免整表重建
+  let lastSessionsData = []; // Debug tab 的 session 下拉框要用完整列表找标题，跳转时也要用
 
   function renderSessionsList(sessions) {
     lastSessionsData = sessions;
@@ -191,7 +181,7 @@
     if (!sessions.length) {
       list.innerHTML = `<div class="empty">没有找到该项目的会话记录</div>`;
       sessionCardEls.clear();
-      expandedSessionId = null;
+      renderSessionSelect(sessions);
       return;
     }
     if (list.querySelector(".empty")) list.innerHTML = "";
@@ -217,34 +207,7 @@
         sessionCardEls.delete(id);
       }
     }
-
-    if (expandedSessionId && !seen.has(expandedSessionId)) {
-      expandedSessionId = null;
-    }
-  }
-
-  async function loadSessionTimeline(sessionId) {
-    const box = document.getElementById(`timeline-${sessionId}`);
-    if (!box) return;
-    box.classList.add("open");
-    // 已经有内容（比如轮询期间重新拉取）就先保留旧内容，等新数据到了再一次性替换，
-    // 不要先清空再显示"加载中"，那一下清空就是日志窗口"消失"的跳动来源。
-    if (!box.children.length) box.innerHTML = `<div class="empty">加载中…</div>`;
-    try {
-      const data = await getJSON(`/api/sessions/${encodeURIComponent(sessionId)}/timeline`);
-      if (expandedSessionId !== sessionId) return; // 拉取期间用户切换/收起了，丢弃结果
-      box.innerHTML = "";
-      const entries = data.entries || [];
-      if (!entries.length) {
-        box.innerHTML = `<div class="empty">没有调用记录</div>`;
-        return;
-      }
-      for (const e of entries) box.appendChild(buildDebugLine(e));
-      box.scrollTop = box.scrollHeight;
-    } catch (err) {
-      if (expandedSessionId !== sessionId) return;
-      box.innerHTML = `<div class="empty">加载失败: ${esc(err.message)}</div>`;
-    }
+    renderSessionSelect(sessions);
   }
 
   function renderSessionsTab(data) {
@@ -257,7 +220,6 @@
     try {
       const data = await getJSON("/api/sessions");
       renderSessionsList(data.sessions || []);
-      if (expandedSessionId) loadSessionTimeline(expandedSessionId);
     } catch (e) {
       // 轮询失败静默重试
     }
@@ -402,9 +364,54 @@
   let debugPollTimer = null;
   let debugFollow = true;
 
+  // 筛到单个 session 时（Sessions tab 点击卡片跳转过来，或者手动选下拉框），
+  // "" 代表全部 session，走 /api/debug 的增量轮询；选中具体 session 后改用
+  // /api/sessions/<id>/timeline，每轮询周期整份重拉——数据量有 limit 兜底，
+  // 重拉的代价可以接受，换来的是不用维护第二套增量游标逻辑。
+  let debugSessionFilter = "";
+
+  // 下拉框只列 active session（用户明确要的口径）；但如果正在筛选的 session
+  // 中途从 active 掉出去了（消息结束、超过 5 分钟没动静），继续把它的选项
+  // 保留在下拉框里并标注"已结束"，不然筛选状态会在下一次轮询时突然消失。
+  function renderSessionSelect(sessions) {
+    const select = $("#session-select");
+    if (!select) return;
+    const active = sessions.filter((s) => s.active);
+    const options = [{ id: "", label: "全部 session" }];
+    for (const s of active) {
+      options.push({ id: s.session_id, label: `${sessionDisplayTitle(s)} · ${s.session_id.slice(-8)}` });
+    }
+    if (debugSessionFilter && !active.some((s) => s.session_id === debugSessionFilter)) {
+      const stale = sessions.find((s) => s.session_id === debugSessionFilter);
+      options.push({
+        id: debugSessionFilter,
+        label: stale
+          ? `${sessionDisplayTitle(stale)} · ${debugSessionFilter.slice(-8)}（已结束）`
+          : `${debugSessionFilter.slice(-8)}（已结束）`,
+      });
+    }
+    select.innerHTML = options.map((o) =>
+      `<option value="${esc(o.id)}"${o.id === debugSessionFilter ? " selected" : ""}>${esc(o.label)}</option>`
+    ).join("");
+  }
+
+  function openSessionInDebug(sessionId) {
+    debugSessionFilter = sessionId;
+    renderSessionSelect(lastSessionsData);
+    switchToTab("debug");
+    startDebugSource();
+  }
+
   function isNearBottom(box) {
     return box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   }
+
+  // 展开状态跟 DOM 节点本身绑死会有个问题：单 session 模式每次轮询都会把
+  // Debug tab 整个重新拉取、整个重建 DOM（见 loadSessionDebug），用户刚点开
+  // 看的工具详情就随着重建一起消失了。用 request_id 记住"哪些条目展开过"，
+  // 重建时按这个 Set 直接把 .open 加回去，跟具体 DOM 节点脱钩。
+  const openEntryKeys = new Set();
+  const entryKey = (e) => e.request_id || `${e.timestamp}-${e.model}`;
 
   // 一条记录里除了摘要行（模型/工具名/耗时等）之外的详细内容——工具入参、
   // 助手输出文字——点击摘要行才展开，避免默认就把日志窗口塞满。
@@ -424,7 +431,10 @@
 
   function buildDebugLine(e) {
     const wrap = document.createElement("div");
-    wrap.className = "term-entry";
+    const key = entryKey(e);
+    wrap.dataset.entryKey = key;
+    wrap.dataset.cost = e.cost_usd || 0;
+    wrap.className = "term-entry" + (openEntryKeys.has(key) ? " open" : "");
 
     const hasDetail = (e.tool_calls && e.tool_calls.length) || e.text;
     const line = document.createElement("div");
@@ -447,7 +457,10 @@
       `<span class="req-id">${esc(e.request_id)}</span>` +
       (e.is_error && e.error_text ? `<span class="err-text">${esc(e.error_text)}</span>` : "");
     if (hasDetail) {
-      line.addEventListener("click", () => wrap.classList.toggle("open"));
+      line.addEventListener("click", () => {
+        const isOpen = wrap.classList.toggle("open");
+        if (isOpen) openEntryKeys.add(key); else openEntryKeys.delete(key);
+      });
     }
     wrap.appendChild(line);
 
@@ -460,12 +473,28 @@
     return wrap;
   }
 
+  // cost 过滤：只影响显示（display:none），不影响已拉取的数据，阈值改了
+  // 不用重新请求接口就能立刻生效。0 = 不过滤。
+  let debugCostThreshold = 0;
+
+  function applyCostFilterTo(entry) {
+    const cost = Number(entry.dataset.cost || 0);
+    entry.classList.toggle("cost-hidden", cost < debugCostThreshold);
+  }
+
+  function applyCostFilter() {
+    const box = $("#debug-log");
+    for (const entry of box.querySelectorAll(".term-entry")) applyCostFilterTo(entry);
+  }
+
   function appendDebugLine(e) {
     const box = $("#debug-log");
     const empty = box.querySelector(".empty");
     if (empty) empty.remove();
     const follow = debugFollow && isNearBottom(box);
-    box.appendChild(buildDebugLine(e));
+    const entry = buildDebugLine(e);
+    applyCostFilterTo(entry);
+    box.appendChild(entry);
     while (box.children.length > DEBUG_MAX_LINES) box.removeChild(box.firstChild);
     if (follow) box.scrollTop = box.scrollHeight;
   }
@@ -482,6 +511,7 @@
         box.appendChild(buildDebugLine(e));
         debugLastTs = e.timestamp;
       }
+      applyCostFilter();
       box.scrollTop = box.scrollHeight;
     }
     if (debugPollTimer) clearInterval(debugPollTimer);
@@ -489,6 +519,7 @@
   }
 
   async function pollDebugTab() {
+    if (debugSessionFilter) return; // 已经切到单 session 模式，这个全量增量轮询该停了
     try {
       const data = await getJSON(`/api/debug?after=${encodeURIComponent(debugLastTs)}&limit=200`);
       // 服务端在 after 模式下按时间正序返回，直接依次追加即可
@@ -501,9 +532,59 @@
     }
   }
 
+  // 单 session 模式：每轮询周期整份重拉这个 session 的完整时间线并重建 DOM——
+  // openEntryKeys 保证重建不影响已展开的详情，见 buildDebugLine 顶部的注释。
+  async function loadSessionDebug(sessionId) {
+    const box = $("#debug-log");
+    try {
+      const data = await getJSON(`/api/sessions/${encodeURIComponent(sessionId)}/timeline?limit=1000`);
+      if (debugSessionFilter !== sessionId) return; // 拉取期间用户切换了筛选，丢弃结果
+      const entries = data.entries || [];
+      box.innerHTML = "";
+      if (!entries.length) {
+        box.innerHTML = `<div class="empty">这个 session 还没有调用记录</div>`;
+      } else {
+        for (const e of entries) box.appendChild(buildDebugLine(e));
+        applyCostFilter();
+        if (debugFollow) box.scrollTop = box.scrollHeight;
+      }
+    } catch (err) {
+      if (debugSessionFilter !== sessionId) return;
+      box.innerHTML = `<div class="empty">加载失败: ${esc(err.message)}</div>`;
+    }
+  }
+
+  // Debug tab 数据源的统一入口：按 debugSessionFilter 决定走全量增量轮询还是
+  // 单 session 整拉，切换前先停掉另一套的定时器，避免两个轮询同时写 DOM。
+  async function startDebugSource() {
+    if (debugPollTimer) clearInterval(debugPollTimer);
+    const box = $("#debug-log");
+    if (debugSessionFilter) {
+      box.innerHTML = `<div class="empty">加载中…</div>`;
+      await loadSessionDebug(debugSessionFilter);
+      debugPollTimer = setInterval(() => loadSessionDebug(debugSessionFilter), DEBUG_POLL_MS);
+    } else {
+      try {
+        renderDebugTab(await getJSON("/api/debug"));
+      } catch (err) {
+        box.innerHTML = `<div class="empty">加载失败: ${esc(err.message)}</div>`;
+      }
+    }
+  }
+
   function setupTerminalControls() {
     const box = $("#debug-log");
     const followToggle = $("#follow-toggle");
+    const costFilter = $("#cost-filter");
+    const sessionSelect = $("#session-select");
+    costFilter.addEventListener("input", () => {
+      debugCostThreshold = Number(costFilter.value) || 0;
+      applyCostFilter();
+    });
+    sessionSelect.addEventListener("change", () => {
+      debugSessionFilter = sessionSelect.value;
+      startDebugSource();
+    });
     followToggle.addEventListener("change", () => {
       debugFollow = followToggle.checked;
       if (debugFollow) box.scrollTop = box.scrollHeight;
