@@ -406,9 +406,30 @@
     return box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   }
 
+  // 一条记录里除了摘要行（模型/工具名/耗时等）之外的详细内容——工具入参、
+  // 助手输出文字——点击摘要行才展开，避免默认就把日志窗口塞满。
+  function buildDetailPanel(e) {
+    const parts = [];
+    for (const call of e.tool_calls || []) {
+      parts.push(
+        `<div class="detail-tool"><span class="name">${esc(call.name)}</span>` +
+        `<pre>${esc(call.input)}</pre>` +
+        (call.truncated ? `<div class="detail-truncated">（入参过长，已截断）</div>` : "") +
+        `</div>`
+      );
+    }
+    if (e.text) parts.push(`<div class="detail-text">${esc(e.text)}</div>`);
+    return parts.join("");
+  }
+
   function buildDebugLine(e) {
+    const wrap = document.createElement("div");
+    wrap.className = "term-entry";
+
+    const hasDetail = (e.tool_calls && e.tool_calls.length) || e.text;
     const line = document.createElement("div");
-    line.className = "term-line" + (e.is_error ? " error" : "");
+    line.className = "term-line" + (e.is_error ? " error" : "") + (hasDetail ? " has-detail" : "");
+    const toggle = hasDetail ? `<span class="toggle">▸</span>` : `<span class="toggle"></span>`;
     const agent = e.agent ? `<span class="agent">[${esc(e.agent)}]</span> ` : "";
     const stop = e.stop_reason ? ` <span class="stop">stop=${esc(e.stop_reason)}</span>` : "";
     const tools = (e.tool_uses || []).length
@@ -416,12 +437,27 @@
     const effort = e.effort ? ` <span class="effort">effort=${esc(e.effort)}</span>` : "";
     const cacheMiss = e.cache_miss_reason
       ? ` <span class="cache-miss">cache_miss=${esc(e.cache_miss_reason)}</span>` : "";
+    const tokens = e.total_tokens
+      ? ` <span class="tokens">tokens=${fmt(e.total_tokens)}</span>` : "";
+    const cost = e.cost_usd
+      ? ` <span class="cost">${fmtUsd(e.cost_usd)}</span>` : "";
     line.innerHTML =
-      `<span class="prompt">&gt;</span> <span class="ts">${esc(e.timestamp)}</span> ` +
-      `${agent}<span class="model">${esc(e.model)}</span>${stop}${tools}${effort}${cacheMiss} ` +
+      `${toggle}<span class="prompt">&gt;</span> <span class="ts">${esc(e.timestamp)}</span> ` +
+      `${agent}<span class="model">${esc(e.model)}</span>${stop}${tools}${effort}${cacheMiss}${tokens}${cost} ` +
       `<span class="req-id">${esc(e.request_id)}</span>` +
       (e.is_error && e.error_text ? `<span class="err-text">${esc(e.error_text)}</span>` : "");
-    return line;
+    if (hasDetail) {
+      line.addEventListener("click", () => wrap.classList.toggle("open"));
+    }
+    wrap.appendChild(line);
+
+    if (hasDetail) {
+      const detail = document.createElement("div");
+      detail.className = "term-detail";
+      detail.innerHTML = buildDetailPanel(e);
+      wrap.appendChild(detail);
+    }
+    return wrap;
   }
 
   function appendDebugLine(e) {

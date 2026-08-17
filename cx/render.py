@@ -330,7 +330,10 @@ def render_debug_entry(e: DebugEntry) -> None:
     agent = C.dim(f" [{e.agent}]") if e.agent else ""
     tools = f"  tools={','.join(e.tool_uses)}" if e.tool_uses else ""
     stop = f"  stop={e.stop_reason}" if e.stop_reason else ""
-    print(f"  {mark} {C.dim(e.timestamp)}  {C.cyan(e.model)}{agent}{stop}{tools}")
+    total = e.input_tokens + e.output_tokens + e.cache_creation_tokens + e.cache_read_tokens
+    tokens = f"  tokens={fmt_count(total)}" if total else ""
+    cost = f"  ${e.cost_usd:.4f}" if e.cost_usd else ""
+    print(f"  {mark} {C.dim(e.timestamp)}  {C.cyan(e.model)}{agent}{stop}{tools}{tokens}{cost}")
     if e.is_error and e.error_text:
         text = e.error_text if len(e.error_text) <= 160 else e.error_text[:160] + "…"
         print(f"      {C.red(text)}")

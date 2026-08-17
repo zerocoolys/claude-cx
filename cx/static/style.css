@@ -351,7 +351,40 @@ tr.hot td { color: var(--warn); }
 .term-line .tools { color: var(--project); }
 .term-line .effort { color: var(--accent); }
 .term-line .cache-miss { color: var(--local); }
+.term-line .tokens { color: #8a9bb0; }
+.term-line .cost { color: #e0c341; }
 .term-line .req-id { color: #4b5566; }
 .term-line.error { color: var(--error); }
 .term-line.error .err-text { color: var(--error); display: block; padding-left: 18px; }
 .term-line .prompt { color: #4b5566; }
+.term-line.has-detail { cursor: pointer; }
+.term-line.has-detail:hover { background: rgba(255, 255, 255, 0.04); }
+.term-line .toggle { color: #4b5566; display: inline-block; width: 12px; }
+
+.term-detail {
+  display: none;
+  padding: 4px 0 8px 18px;
+  border-left: 2px solid #232838;
+  margin: 0 0 4px 4px;
+}
+.term-entry.open .term-detail { display: block; }
+.term-detail .detail-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--dim);
+  padding: 2px 0 6px;
+}
+.term-detail .detail-tool {
+  margin: 2px 0;
+}
+.term-detail .detail-tool .name { color: var(--project); }
+.term-detail .detail-tool pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--dim);
+  margin: 2px 0 6px;
+  padding: 4px 8px;
+  background: #0a0d13;
+  border-radius: 4px;
+}
+.term-detail .detail-truncated { color: var(--local); font-size: 11px; }
