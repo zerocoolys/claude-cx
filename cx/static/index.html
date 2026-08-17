@@ -98,6 +98,14 @@
             <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
             <span class="terminal-title">debug log</span>
             <span class="hint">stop_reason / requestId / tool_use / 报错文本 · 每 3 秒轮询新记录</span>
+            <label class="filter-field">
+              <span>session</span>
+              <select id="session-select"><option value="">全部 session</option></select>
+            </label>
+            <label class="filter-field">
+              <span>cost ≥</span>
+              <input type="number" id="cost-filter" min="0" step="0.01" placeholder="0">
+            </label>
             <label class="follow-toggle">
               <input type="checkbox" id="follow-toggle" checked>
               <span>跟随最新</span>

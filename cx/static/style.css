@@ -193,19 +193,6 @@ body {
   border-radius: 10px;
 }
 
-.session-timeline {
-  display: none;
-  margin-top: 10px;
-  background: #05070a;
-  border-radius: 6px;
-  padding: 10px 12px;
-  max-height: 40vh;
-  overflow-y: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-}
-.session-timeline.open { display: block; }
-
 main { padding: 24px 28px 40px; max-width: 1180px; }
 
 .tab { display: none; }
@@ -316,6 +303,26 @@ tr.hot td { color: var(--warn); }
   white-space: nowrap;
   cursor: pointer;
 }
+
+.filter-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.filter-field input, .filter-field select {
+  background: #05070a;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.filter-field input { width: 64px; }
+.filter-field select { max-width: 220px; }
+.term-entry.cost-hidden { display: none; }
 
 .ghost-btn {
   background: none;
